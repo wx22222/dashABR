@@ -28,17 +28,23 @@ document.addEventListener('DOMContentLoaded', function () {
 
         player.on(dashjs.MediaPlayer.events.BUFFER_EMPTY, function () {
             rebufferFlag = true;
-            addSample(true);
+            updateStatsOnce(true);
         });
         player.on(dashjs.MediaPlayer.events.BUFFER_LOADED, function () {
             setTimeout(() => { rebufferFlag = false; }, 1500);
         });
         player.on(dashjs.MediaPlayer.events.PLAYBACK_WAITING, function () {
             rebufferFlag = true;
-            addSample(true);
+            updateStatsOnce(true);
         });
         player.on(dashjs.MediaPlayer.events.PLAYBACK_PLAYING, function () {
             setTimeout(() => { rebufferFlag = false; }, 1500);
+        });
+
+        player.on(dashjs.MediaPlayer.events.FRAGMENT_LOADING_COMPLETED, function (e) {
+            if (e && e.request && e.request.mediaType === 'video') {
+                updateStatsOnce(false);
+            }
         });
     }
 
@@ -62,7 +68,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // Stats sampling buffer
     const statsSamples = [];
 
-    function addSample(rebufferTag) {
+    function updateStatsOnce(rebufferTag) {
         if (!(player && player.isReady())) return;
         const dashMetrics = player.getDashMetrics();
         const bufferLevel = dashMetrics.getCurrentBufferLevel('video');
@@ -79,6 +85,15 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (e) {
             liveLatency = null;
         }
+        let statsHtml = `
+            <div>Buffer Level: ${bufferLevel ? bufferLevel.toFixed(2) : 0} s</div>
+            <div>Current Quality Index: ${qualityIndex >= 0 ? qualityIndex : 'N/A'}</div>
+            <div>Bitrate: ${rep && rep.bitrateInKbit ? Math.round(rep.bitrateInKbit) + ' kbps' : 'N/A'}</div>
+            <div>Resolution: ${rep && rep.width && rep.height ? rep.width + 'x' + rep.height : 'N/A'}</div>
+            <div>Live Latency: ${liveLatency !== null ? liveLatency.toFixed(2) + ' s' : 'N/A'}</div>
+            <div>Rebuffer: ${rebufferFlag ? 'rebuffer happen' : '—'}</div>
+        `;
+        statsOutput.innerHTML = statsHtml;
         statsSamples.push({
             timestamp: new Date().toISOString(),
             bufferLevel: typeof bufferLevel === 'number' ? bufferLevel : null,
@@ -91,54 +106,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function setupStatsUpdate() {
-        // Clear any previous interval
         if (statsTimer) {
             clearInterval(statsTimer);
             statsTimer = null;
         }
-        statsTimer = setInterval(() => {
-            if (player && player.isReady()) {
-                const dashMetrics = player.getDashMetrics();
-                const bufferLevel = dashMetrics.getCurrentBufferLevel('video');
-                const rep = player.getCurrentRepresentationForType('video');
-                const reps = player.getRepresentationsByType('video') || [];
-                const qualityIndex = rep ? reps.findIndex(r => r.id === rep.id) : -1;
-
-                // Live latency estimation (seconds): difference between DVR window end and current presentation time
-                // Works for dynamic streams (live). For VoD this value will equal duration and is not meaningful.
-                let liveLatency = null;
-                try {
-                    const dvr = player.getDvrWindow();
-                    if (dvr && typeof dvr.end === 'number') {
-                        const nowPT = player.time();
-                        liveLatency = dvr.end - nowPT;
-                    }
-                } catch (e) {
-                    liveLatency = null;
-                }
-
-                let statsHtml = `
-                    <div>Buffer Level: ${bufferLevel ? bufferLevel.toFixed(2) : 0} s</div>
-                    <div>Current Quality Index: ${qualityIndex >= 0 ? qualityIndex : 'N/A'}</div>
-                    <div>Bitrate: ${rep && rep.bitrateInKbit ? Math.round(rep.bitrateInKbit) + ' kbps' : 'N/A'}</div>
-                    <div>Resolution: ${rep && rep.width && rep.height ? rep.width + 'x' + rep.height : 'N/A'}</div>
-                    <div>Live Latency: ${liveLatency !== null ? liveLatency.toFixed(2) + ' s' : 'N/A'}</div>
-                    <div>Rebuffer: ${rebufferFlag ? 'rebuffer happen' : '—'}</div>
-                `;
-                statsOutput.innerHTML = statsHtml;
-
-                // Push sample
-                statsSamples.push({
-                    timestamp: new Date().toISOString(),
-                    bufferLevel: typeof bufferLevel === 'number' ? bufferLevel : null,
-                    qualityIndex: qualityIndex,
-                    bitrateKbps: rep && rep.bitrateInKbit ? Math.round(rep.bitrateInKbit) : null,
-                    resolution: rep && rep.width && rep.height ? `${rep.width}x${rep.height}` : null,
-                    liveLatency: typeof liveLatency === 'number' ? liveLatency : null,
-                    rebuffer: rebufferFlag ? 'rebuffer happen' : ''
-                });
-            }
-        }, 1000);
     }
 
     // Stop stats updates when playback ends
@@ -147,6 +118,8 @@ document.addEventListener('DOMContentLoaded', function () {
             clearInterval(statsTimer);
             statsTimer = null;
         }
+        // Final sample on end for completeness
+        updateStatsOnce(false);
     });
 
     // Export CSV button
