@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dash.js Custom Player</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 引入 dash.js -->
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Dash.js Custom Player</h1>
+        
+        <div class="input-group">
+            <input type="text" id="stream-url" placeholder="Enter MPD URL" value="http://localhost:9001/live/live.mpd">
+            <button id="load-btn">Load Stream</button>
+        </div>
+
+        <div class="video-container">
+            <video id="videoPlayer" controls></video>
+        </div>
+
+        <div class="stats-panel">
+            <h3>Stats</h3>
+            <div id="stats-output">Waiting for stream...</div>
+            <div style="margin-top:10px;">
+                <button id="export-csv-btn">Export CSV</button>
+            </div>
+        </div>
+        
+        <div class="abr-control">
+             <h3>Custom ABR</h3>
+             <button id="enable-custom-abr">Enable Custom ABR Rule</button>
+             <span id="abr-status">Status: Default ABR</span>
+        </div>
+    </div>
+
+    <script src="CustomAbrRule.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
