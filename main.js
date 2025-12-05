@@ -21,6 +21,22 @@ document.addEventListener('DOMContentLoaded', function () {
         player.updateSettings({
             'debug': {
                 'logLevel': dashjs.Debug.LOG_LEVEL_INFO
+            },
+            'streaming': {
+                'lowLatencyEnabled': true,
+                'fastSwitchEnabled': true,
+                'abr': {
+                    'rules': {
+                        'throughputRule': { 'active': false },
+                        'bolaRule': { 'active': false },
+                        'insufficientBufferRule': { 'active': false },
+                        'switchHistoryRule': { 'active': false },
+                        'droppedFramesRule': { 'active': false },
+                        'abandonRequestsRule': { 'active': false },
+                        'l2ARule': { 'active': false },
+                        'loLPRule': { 'active': true }
+                    }
+                }
             }
         });
 
