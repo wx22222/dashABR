@@ -23,18 +23,22 @@ document.addEventListener('DOMContentLoaded', function () {
                 'logLevel': dashjs.Debug.LOG_LEVEL_INFO
             },
             'streaming': {
-                'lowLatencyEnabled': true,
-                'fastSwitchEnabled': true,
+                'buffer': {
+                    'fastSwitchEnabled': true
+                },
+                'liveCatchup': {
+                    'enabled': true
+                },
                 'abr': {
                     'rules': {
                         'throughputRule': { 'active': false },
                         'bolaRule': { 'active': false },
                         'insufficientBufferRule': { 'active': false },
-                        'switchHistoryRule': { 'active': false },
+                        'switchHistoryRule': { 'active': true },
                         'droppedFramesRule': { 'active': false },
-                        'abandonRequestsRule': { 'active': false },
+                        'abandonRequestsRule': { 'active': true },
                         'l2ARule': { 'active': false },
-                        'loLPRule': { 'active': true }
+                        'loLPRule': { 'active': false }
                     }
                 }
             }
@@ -183,13 +187,8 @@ document.addEventListener('DOMContentLoaded', function () {
             // but addABRCustomRule should inject it. 
             // We might need to force a reload or just let it run.
             
-            player.updateSettings({
-                'streaming': {
-                    'abr': {
-                        'useDefaultABRRules': true // Keep default rules, ours will run alongside or override depending on implementation
-                    }
-                }
-            });
+            // Default ABR rules are already disabled via initial settings.
+            // No additional settings update is required here.
 
             abrStatus.textContent = "Status: Custom ABR Enabled";
             enableAbrBtn.textContent = "Disable Custom ABR (Reload required to fully reset)";
