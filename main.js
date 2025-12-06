@@ -95,6 +95,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const rep = player.getCurrentRepresentationForType('video');
         const reps = player.getRepresentationsByType('video') || [];
         const qualityIndex = rep ? reps.findIndex(r => r.id === rep.id) : -1;
+        const predictedKbps = (typeof window !== 'undefined' && typeof window.dashPredictedKbps === 'number') ? window.dashPredictedKbps : null;
         let liveLatency = null;
         try {
             const dvr = player.getDvrWindow();
@@ -111,6 +112,7 @@ document.addEventListener('DOMContentLoaded', function () {
             <div>Bitrate: ${rep && rep.bitrateInKbit ? Math.round(rep.bitrateInKbit) + ' kbps' : 'N/A'}</div>
             <div>Resolution: ${rep && rep.width && rep.height ? rep.width + 'x' + rep.height : 'N/A'}</div>
             <div>Live Latency: ${liveLatency !== null ? liveLatency.toFixed(2) + ' s' : 'N/A'}</div>
+            <div>Predicted Throughput: ${predictedKbps !== null ? predictedKbps + ' kbps' : 'N/A'}</div>
             <div>Rebuffer: ${rebufferFlag ? 'rebuffer happen' : '—'}</div>
         `;
         statsOutput.innerHTML = statsHtml;
@@ -121,6 +123,7 @@ document.addEventListener('DOMContentLoaded', function () {
             bitrateKbps: rep && rep.bitrateInKbit ? Math.round(rep.bitrateInKbit) : null,
             resolution: rep && rep.width && rep.height ? `${rep.width}x${rep.height}` : null,
             liveLatency: typeof liveLatency === 'number' ? liveLatency : null,
+            predictedKbps: predictedKbps,
             rebuffer: rebufferTag ? 'rebuffer happen' : ''
         });
     }
@@ -150,7 +153,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            const header = ['timestamp','bufferLevel','qualityIndex','bitrateKbps','resolution','liveLatency','rebuffer'];
+            const header = ['timestamp','bufferLevel','qualityIndex','bitrateKbps','resolution','liveLatency','predictedKbps','rebuffer'];
             const rows = statsSamples.map(s => header.map(h => s[h] !== null && s[h] !== undefined ? s[h] : ''));
             const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

@@ -12,6 +12,7 @@ function CustomAbrRule(context) {
             let ewmaFast = null;
             let ewmaSlow = null;
             let lastIndex = null;
+            let goodCount = 0;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
             const safetyFactor = 0.85;
@@ -23,6 +24,7 @@ function CustomAbrRule(context) {
             const wBitrate = 1.0;
             const wRebuffer = 4.0;
             const wLatency = 0.2;
+            const fastDownloadFrac = 0.75;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
                 getSwitchRequest: function (rulesContext) { return this.checkIndex(rulesContext); },
@@ -51,19 +53,24 @@ function CustomAbrRule(context) {
                     let effBufThr = upswitchBufferThreshold;
                     let effMaxUp = maxStepUp;
                     let effBeta = betaBudget;
+                    let effWRebuffer = wRebuffer;
+                    let wFast = 0.3;
                     if (typeof bufferLevel === 'number') {
                         if (bufferLevel >= 1.5) {
+                            effSafety = 0.98;
+                            effMargin = 1.05;
+                            effBufThr = 0.5;
+                            effMaxUp = 3;
+                            effBeta = 1.05;
+                            effWRebuffer = 3.0;
+                            wFast = 0.8;
+                        } else if (bufferLevel >= 1.0) {
                             effSafety = 0.95;
                             effMargin = 1.1;
-                            effBufThr = 0.5;
+                            effBufThr = 0.8;
                             effMaxUp = 2;
                             effBeta = 1.0;
-                        } else if (bufferLevel >= 1.0) {
-                            effSafety = 0.9;
-                            effMargin = 1.2;
-                            effBufThr = 1.0;
-                            effMaxUp = 1;
-                            effBeta = 0.95;
+                            wFast = 0.6;
                         }
                     }
                     let liveLatency = null;
@@ -112,29 +119,64 @@ function CustomAbrRule(context) {
 
                     ewmaFast = ewmaFast === null ? measurementKbps : (alphaFast * measurementKbps + (1 - alphaFast) * ewmaFast);
                     ewmaSlow = ewmaSlow === null ? measurementKbps : (alphaSlow * measurementKbps + (1 - alphaSlow) * ewmaSlow);
-                    let predictedKbps = Math.min(ewmaFast, ewmaSlow) * effSafety;
+                    let predictedKbps = (wFast * ewmaFast + (1 - wFast) * ewmaSlow) * effSafety;
+                    if (typeof window !== 'undefined') {
+                        try {
+                            window.dashPredictedKbps = Math.round(predictedKbps);
+                        } catch (e) {}
+                    }
                     if (!predictedKbps || !isFinite(predictedKbps) || predictedKbps <= 0) {
                         predictedKbps = measurementKbps;
                     }
 
+                    let allowBypass = false;
+                    if (lastIndex === 0 && typeof bufferLevel === 'number' && bufferLevel < 0.2) {
+                        const nextIdxProbe = Math.min(sorted.length - 1, 1);
+                        const nextKbProbe = (sorted[nextIdxProbe].bitrateInKbit || sorted[nextIdxProbe].bitrate || 0);
+                        if (nextKbProbe > 0 && predictedKbps >= nextKbProbe * 1.4) {
+                            allowBypass = true;
+                        }
+                    }
+
                     let maxAllowedUpIndex = lastIndex !== null ? Math.min(sorted.length - 1, lastIndex + effMaxUp) : sorted.length - 1;
+                    if (lastIndex !== null) {
+                        const nextIdx = Math.min(sorted.length - 1, lastIndex + 1);
+                        const nextKb = (sorted[nextIdx].bitrateInKbit || sorted[nextIdx].bitrate || 0);
+                        const segDur2 = typeof mediaInfo.fragmentDuration === 'number' ? mediaInfo.fragmentDuration : (typeof mediaInfo.segmentDuration === 'number' ? mediaInfo.segmentDuration : defaultSegDuration);
+                        const downloadTimeNext = nextKb > 0 && predictedKbps > 0 ? (nextKb * segDur2) / predictedKbps : Infinity;
+                        const budgetFloorNext = 0.35 * segDur2;
+                        const budgetOkNext = typeof bufferLevel === 'number' ? (downloadTimeNext <= Math.max(bufferLevel * effBeta, budgetFloorNext)) : true;
+                        const gateOkNext = (typeof bufferLevel === 'number' && bufferLevel >= effBufThr) || (downloadTimeNext <= segDur2 * fastDownloadFrac) || allowBypass;
+                        const marginOkNext = predictedKbps >= nextKb * effMargin;
+                        if (budgetOkNext && gateOkNext && marginOkNext) {
+                            goodCount = Math.min(goodCount + 1, 10);
+                            maxAllowedUpIndex = Math.min(sorted.length - 1, lastIndex + Math.max(effMaxUp, 2));
+                        } else {
+                            goodCount = 0;
+                        }
+                    }
                     let bestIndex = lastIndex !== null ? lastIndex : 0;
                     let bestScore = -Infinity;
                     const segDur = typeof mediaInfo.fragmentDuration === 'number' ? mediaInfo.fragmentDuration : (typeof mediaInfo.segmentDuration === 'number' ? mediaInfo.segmentDuration : defaultSegDuration);
+                    const budgetFloor = 0.35 * segDur;
                     for (let i = 0; i < sorted.length; i++) {
                         const kb = (sorted[i].bitrateInKbit || sorted[i].bitrate || 0);
                         const downloadTime = kb > 0 && predictedKbps > 0 ? (kb * segDur) / predictedKbps : Infinity;
                         const buf = typeof bufferLevel === 'number' ? bufferLevel : 0;
                         const rebuffer = downloadTime > buf ? (downloadTime - buf) : 0;
-                        const budgetOk = typeof bufferLevel === 'number' ? (downloadTime <= bufferLevel * effBeta) : true;
+                        const budgetOk = typeof bufferLevel === 'number' ? (downloadTime <= Math.max(bufferLevel * effBeta, budgetFloor)) : true;
 
                         if (lastIndex !== null && i > lastIndex) {
                             if (i > maxAllowedUpIndex) {
                                 continue;
                             }
                             const bufferOk = typeof bufferLevel === 'number' && bufferLevel >= effBufThr;
-                            const marginOk = predictedKbps >= kb * effMargin;
-                            if (!(bufferOk && marginOk)) {
+                            const fastOk = downloadTime <= segDur * fastDownloadFrac;
+                            let marginOk = predictedKbps >= kb * effMargin;
+                            if (goodCount >= 2 && i === lastIndex + 1) {
+                                marginOk = true;
+                            }
+                            if (!((bufferOk || fastOk || allowBypass) && marginOk)) {
                                 continue;
                             }
                         }
@@ -145,7 +187,7 @@ function CustomAbrRule(context) {
 
                         const bitrateScore = Math.log(1 + kb);
                         const latencyPenalty = typeof liveLatency === 'number' ? liveLatency : 0;
-                        const score = wBitrate * bitrateScore - wRebuffer * rebuffer - wLatency * latencyPenalty;
+                        const score = wBitrate * bitrateScore - effWRebuffer * rebuffer - wLatency * latencyPenalty;
                         if (score > bestScore) {
                             bestScore = score;
                             bestIndex = i;
