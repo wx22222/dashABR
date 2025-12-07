@@ -13,6 +13,14 @@ function CustomAbrRule(context) {
             let ewmaSlow = null;
             let lastIndex = null;
             let goodCount = 0;
+            let lstmSession = null;
+            let lstmCfg = null;
+            let lstmLoading = false;
+            let histSeries = [];
+            let predKbpsLstm = null;
+            let lastMs = null;
+            let bucketTime = 0.0;
+            const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
             const safetyFactor = 0.85;
@@ -117,9 +125,81 @@ function CustomAbrRule(context) {
                         return switchRequest;
                     }
 
+                    if (!lstmSession && !lstmLoading) {
+                        lstmLoading = true;
+                        try {
+                            fetch('assets/models/oboe_lstm_cfg.json').then(function(r){return r.json();}).then(function(cfg){
+                                lstmCfg = cfg || {};
+                                const hp = (lstmCfg && typeof lstmCfg.hist_len==='number') ? lstmCfg.hist_len : 30;
+                                lstmCfg = {
+                                    hist_len: hp,
+                                    xm: typeof cfg.xm==='number'?cfg.xm:0.0,
+                                    xs: typeof cfg.xs==='number'?cfg.xs:1.0,
+                                    ym: typeof cfg.ym==='number'?cfg.ym:0.0,
+                                    ys: typeof cfg.ys==='number'?cfg.ys:1.0
+                                };
+                                if (typeof ort !== 'undefined' && ort && typeof ort.InferenceSession !== 'undefined') {
+                                    ort.InferenceSession.create('assets/models/oboe_lstm.onnx').then(function(s){
+                                        lstmSession = s;
+                                        lstmLoading = false;
+                                    }).catch(function(){lstmLoading=false;});
+                                } else {
+                                    lstmLoading = false;
+                                }
+                            }).catch(function(){lstmLoading=false;});
+                        } catch(e){
+                            lstmLoading = false;
+                        }
+                    }
+
+                    try {
+                        const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+                        if (lastMs === null) {
+                            lastMs = nowMs;
+                        }
+                        const dtSec = Math.max(0, (nowMs - lastMs) / 1000.0);
+                        lastMs = nowMs;
+                        bucketTime += dtSec;
+                        while (bucketTime >= aggDt) {
+                            histSeries.push(measurementKbps);
+                            bucketTime -= aggDt;
+                        }
+                        const hlen = (lstmCfg && lstmCfg.hist_len) ? lstmCfg.hist_len : 30;
+                        if (histSeries.length > hlen) histSeries = histSeries.slice(histSeries.length - hlen);
+                        const ready = lstmSession && histSeries.length >= hlen;
+                        if (ready) {
+                            const xm = lstmCfg.xm || 0.0;
+                            const xs = lstmCfg.xs || 1.0;
+                            const ys = lstmCfg.ys || 1.0;
+                            const ym = lstmCfg.ym || 0.0;
+                            const inp = new Float32Array(hlen);
+                            for (let i = 0; i < hlen; i++) {
+                                const v = histSeries[histSeries.length - hlen + i];
+                                inp[i] = (v - xm) / (xs || 1.0);
+                            }
+                            const feeds = { hist: new ort.Tensor('float32', inp, [1, hlen]) };
+                            lstmSession.run(feeds).then(function(o){
+                                const pred = o && o.pred && o.pred.data && o.pred.data[0];
+                                if (typeof pred === 'number' && isFinite(pred)) {
+                                    const kbps = pred * (ys || 1.0) + (ym || 0.0);
+                                    if (kbps > 0 && isFinite(kbps)) {
+                                        predKbpsLstm = kbps;
+                                        if (typeof window !== 'undefined') {
+                                            try { window.dashPredictedKbps = Math.round(predKbpsLstm); } catch(e){}
+                                        }
+                                    }
+                                }
+                            }).catch(function(){});
+                        }
+                    } catch(e){}
+
                     ewmaFast = ewmaFast === null ? measurementKbps : (alphaFast * measurementKbps + (1 - alphaFast) * ewmaFast);
                     ewmaSlow = ewmaSlow === null ? measurementKbps : (alphaSlow * measurementKbps + (1 - alphaSlow) * ewmaSlow);
-                    let predictedKbps = (wFast * ewmaFast + (1 - wFast) * ewmaSlow) * effSafety;
+                    let predictedKbpsBase = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
+                    if (predKbpsLstm && isFinite(predKbpsLstm) && predKbpsLstm > 0) {
+                        predictedKbpsBase = predKbpsLstm;
+                    }
+                    let predictedKbps = predictedKbpsBase * effSafety;
                     if (typeof window !== 'undefined') {
                         try {
                             window.dashPredictedKbps = Math.round(predictedKbps);

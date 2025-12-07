@@ -338,8 +338,8 @@ def plot_quality_dist(rows1, rows2, n1, n2, out_path):
 
 def main():
     base_dir = os.getcwd()
-    p1 = os.path.join(base_dir, "dash_stat_LoLp.csv")
-    p2 = os.path.join(base_dir, "dash_stats_customrule.csv")
+    p1 = os.path.join(base_dir, "assets", "data", "dash_stat_LoLp_oboe.csv")
+    p2 = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_oboe.csv")
     args = sys.argv[1:]
     if len(args) >= 2:
         p1 = args[0]
@@ -351,9 +351,9 @@ def main():
     print_metrics("LoLp", m1)
     print_metrics("CustomRule", m2)
     compare(m2, m1, "CustomRule", "LoLp")
-    out_summary = os.path.join(base_dir, "abr_compare_summary.png")
-    out_ts = os.path.join(base_dir, "abr_compare_timeseries.png")
-    out_qdist = os.path.join(base_dir, "abr_compare_quality_dist.png")
+    out_summary = os.path.join(base_dir, "assets", "images", "abr_compare_summary.png")
+    out_ts = os.path.join(base_dir, "assets", "images", "abr_compare_timeseries.png")
+    out_qdist = os.path.join(base_dir, "assets", "images", "abr_compare_quality_dist.png")
     plot_summary(m1, m2, "LoLp", "CustomRule", out_summary)
     plot_timeseries(rows1, rows2, "LoLp", "CustomRule", out_ts)
     plot_quality_dist(rows1, rows2, "LoLp", "CustomRule", out_qdist)

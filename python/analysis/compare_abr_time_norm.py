@@ -387,8 +387,8 @@ def align_duration(rows1, rows2):
 
 def main():
     base_dir = os.getcwd()
-    p1 = os.path.join(base_dir, "dash_stat_LoLp.csv")
-    p2 = os.path.join(base_dir, "dash_stats_customrule.csv")
+    p1 = os.path.join(base_dir, "assets", "data", "dash_stat_LoLp_oboe.csv")
+    p2 = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_oboe.csv")
     dt = 0.5
     args = sys.argv[1:]
     if len(args) >= 2:
@@ -413,9 +413,9 @@ def main():
     print_time_metrics("LoLp-Time", m1)
     print_time_metrics("CustomRule-Time", m2)
     compare_time(m2, m1, "CustomRule-Time", "LoLp-Time")
-    out_summary = os.path.join(base_dir, "abr_time_norm_summary.png")
-    out_ts = os.path.join(base_dir, "abr_time_norm_timeseries.png")
-    out_qdist = os.path.join(base_dir, "abr_time_norm_quality_dist.png")
+    out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.png")
+    out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.png")
+    out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.png")
     plot_summary(m1, m2, "LoLp", "CustomRule", out_summary)
     plot_timeseries(t1, s1, t2, s2, "LoLp", "CustomRule", out_ts)
     plot_quality_dist(s1, s2, "LoLp", "CustomRule", out_qdist)
