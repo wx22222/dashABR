@@ -23,7 +23,7 @@ function CustomAbrRule(context) {
             const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
-            const safetyFactor = 0.85;
+            const safetyFactor = 0.90;
             const maxStepUp = 1;
             const upswitchBufferThreshold = 1.0;
             const upswitchMargin = 1.3;
@@ -33,6 +33,7 @@ function CustomAbrRule(context) {
             const wRebuffer = 4.0;
             const wLatency = 0.2;
             const fastDownloadFrac = 0.75;
+            const targetLatency = 2.0;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
                 getSwitchRequest: function (rulesContext) { return this.checkIndex(rulesContext); },
@@ -65,16 +66,14 @@ function CustomAbrRule(context) {
                     let wFast = 0.3;
                     if (typeof bufferLevel === 'number') {
                         if (bufferLevel >= 1.5) {
-                            effSafety = 0.98;
-                            effMargin = 1.05;
+                            effMargin = 1.02;
                             effBufThr = 0.5;
                             effMaxUp = 3;
                             effBeta = 1.05;
                             effWRebuffer = 3.0;
                             wFast = 0.8;
                         } else if (bufferLevel >= 1.0) {
-                            effSafety = 0.95;
-                            effMargin = 1.1;
+                            effMargin = 1.08;
                             effBufThr = 0.8;
                             effMaxUp = 2;
                             effBeta = 1.0;
@@ -84,6 +83,28 @@ function CustomAbrRule(context) {
                     let liveLatency = null;
                     if (playbackController && typeof playbackController.getLiveLatency === 'function') {
                         liveLatency = playbackController.getLiveLatency();
+                    }
+                    let effWLatency = wLatency;
+                    let effFastFrac = fastDownloadFrac;
+                    const latHigh = typeof liveLatency === 'number' && liveLatency > targetLatency;
+                    if (latHigh) {
+                        effWLatency = Math.max(wLatency, 0.5);
+                        effFastFrac = Math.min(fastDownloadFrac, 0.65);
+                        effMargin = Math.max(effMargin, 1.15);
+                        effMaxUp = Math.min(effMaxUp, 1);
+                        effBufThr = Math.max(effBufThr, 0.8);
+                    } else {
+                        if (typeof bufferLevel === 'number') {
+                            if (bufferLevel >= 1.5) {
+                                effSafety = Math.max(effSafety, 0.93);
+                                effMargin = Math.min(effMargin, 1.04);
+                                effMaxUp = Math.max(effMaxUp, 3);
+                            } else if (bufferLevel >= 1.0) {
+                                effSafety = Math.max(effSafety, 0.90);
+                                effMargin = Math.min(effMargin, 1.08);
+                                effMaxUp = Math.max(effMaxUp, 2);
+                            }
+                        }
                     }
                     const isDynamic = !!(streamInfo && streamInfo.manifestInfo && streamInfo.manifestInfo.isDynamic);
 
@@ -226,7 +247,7 @@ function CustomAbrRule(context) {
                         const downloadTimeNext = nextKb > 0 && predictedKbps > 0 ? (nextKb * segDur2) / predictedKbps : Infinity;
                         const budgetFloorNext = 0.35 * segDur2;
                         const budgetOkNext = typeof bufferLevel === 'number' ? (downloadTimeNext <= Math.max(bufferLevel * effBeta, budgetFloorNext)) : true;
-                        const gateOkNext = (typeof bufferLevel === 'number' && bufferLevel >= effBufThr) || (downloadTimeNext <= segDur2 * fastDownloadFrac) || allowBypass;
+                        const gateOkNext = (typeof bufferLevel === 'number' && bufferLevel >= effBufThr) || (downloadTimeNext <= segDur2 * effFastFrac) || allowBypass;
                         const marginOkNext = predictedKbps >= nextKb * effMargin;
                         if (budgetOkNext && gateOkNext && marginOkNext) {
                             goodCount = Math.min(goodCount + 1, 10);
@@ -251,23 +272,23 @@ function CustomAbrRule(context) {
                                 continue;
                             }
                             const bufferOk = typeof bufferLevel === 'number' && bufferLevel >= effBufThr;
-                            const fastOk = downloadTime <= segDur * fastDownloadFrac;
-                            let marginOk = predictedKbps >= kb * effMargin;
-                            if (goodCount >= 2 && i === lastIndex + 1) {
-                                marginOk = true;
-                            }
-                            if (!((bufferOk || fastOk || allowBypass) && marginOk)) {
-                                continue;
-                            }
+                        const fastOk = downloadTime <= segDur * effFastFrac;
+                        let marginOk = predictedKbps >= kb * effMargin;
+                        if (goodCount >= 2 && i === lastIndex + 1) {
+                            marginOk = true;
                         }
+                        if (!((bufferOk || fastOk || allowBypass) && marginOk)) {
+                            continue;
+                        }
+                    }
 
                         if (!budgetOk) {
                             continue;
                         }
 
                         const bitrateScore = Math.log(1 + kb);
-                        const latencyPenalty = typeof liveLatency === 'number' ? liveLatency : 0;
-                        const score = wBitrate * bitrateScore - effWRebuffer * rebuffer - wLatency * latencyPenalty;
+                        const latencyPenaltyCandidate = latHigh ? Math.max(0, downloadTime - segDur) : 0;
+                        const score = wBitrate * bitrateScore - effWRebuffer * rebuffer - effWLatency * latencyPenaltyCandidate;
                         if (score > bestScore) {
                             bestScore = score;
                             bestIndex = i;

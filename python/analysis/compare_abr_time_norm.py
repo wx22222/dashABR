@@ -320,7 +320,9 @@ def plot_timeseries(t1, s1, t2, s2, n1, n2, out_path):
     b2 = s2["bitrateKbps"]
     buf1 = s1["bufferLevel"]
     buf2 = s2["bufferLevel"]
-    fig, axs = plt.subplots(2, 1, figsize=(12, 7), sharex=False)
+    lat1 = s1["liveLatency"]
+    lat2 = s2["liveLatency"]
+    fig, axs = plt.subplots(3, 1, figsize=(12, 9), sharex=False)
     ax = axs[0]
     ax.plot(rt1, b1, label=n1, color="#4C78A8")
     ax.plot(rt2, b2, label=n2, color="#F58518")
@@ -332,6 +334,11 @@ def plot_timeseries(t1, s1, t2, s2, n1, n2, out_path):
     ax.plot(rt2, buf2, label=n2, color="#F58518")
     ax.set_ylabel("缓冲(s)")
     ax.set_title("时间归一化缓冲")
+    ax = axs[2]
+    ax.plot(rt1, lat1, label=n1, color="#4C78A8")
+    ax.plot(rt2, lat2, label=n2, color="#F58518")
+    ax.set_ylabel("延时(s)")
+    ax.set_title("时间归一化延时")
     ax.set_xlabel("时间(s)")
     fig.tight_layout()
     fig.savefig(out_path)
@@ -387,7 +394,7 @@ def align_duration(rows1, rows2):
 
 def main():
     base_dir = os.getcwd()
-    p1 = os.path.join(base_dir, "assets", "data", "dash_stat_LoLp_oboe.csv")
+    p1 = os.path.join(base_dir, "assets", "data", "dash_stat_lolp_oboe.csv")
     p2 = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_oboe.csv")
     dt = 0.5
     args = sys.argv[1:]
