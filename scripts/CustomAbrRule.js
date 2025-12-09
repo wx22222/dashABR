@@ -23,16 +23,16 @@ function CustomAbrRule(context) {
             const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
-            const safetyFactor = 0.96;
+            const safetyFactor = 0.93;
             const maxStepUp = 2;
-            const upswitchBufferThreshold = 0.7;
-            const upswitchMargin = 1.12;
+            const upswitchBufferThreshold = 0.8;
+            const upswitchMargin = 1.15;
             const betaBudget = 1.0;
             const defaultSegDuration = 0.5;
             const wBitrate = 1.0;
-            const wRebuffer = 3.3;
+            const wRebuffer = 3.6;
             const wLatency = 0.2;
-            const fastDownloadFrac = 0.88;
+            const fastDownloadFrac = 0.85;
             const targetLatency = 2.0;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
@@ -96,18 +96,14 @@ function CustomAbrRule(context) {
                     } else {
                         if (typeof bufferLevel === 'number') {
                             if (bufferLevel >= 1.5) {
-                                effSafety = Math.max(effSafety, 0.98);
-                                effMargin = Math.min(effMargin, 1.02);
+                                effSafety = Math.max(effSafety, 0.96);
+                                effMargin = Math.min(effMargin, 1.03);
                                 effMaxUp = Math.max(effMaxUp, 3);
                             } else if (bufferLevel >= 1.0) {
-                                effSafety = Math.max(effSafety, 0.96);
-                                effMargin = Math.min(effMargin, 1.05);
+                                effSafety = Math.max(effSafety, 0.93);
+                                effMargin = Math.min(effMargin, 1.06);
                                 effMaxUp = Math.max(effMaxUp, 2);
                             }
-                        }
-                        if (predKbpsLstm && isFinite(predKbpsLstm) && predKbpsLstm > 0) {
-                            effMargin = Math.min(effMargin, 1.03);
-                            effSafety = Math.max(effSafety, 0.97);
                         }
                     }
                     const isDynamic = !!(streamInfo && streamInfo.manifestInfo && streamInfo.manifestInfo.isDynamic);
@@ -249,7 +245,7 @@ function CustomAbrRule(context) {
                         const nextKb = (sorted[nextIdx].bitrateInKbit || sorted[nextIdx].bitrate || 0);
                         const segDur2 = typeof mediaInfo.fragmentDuration === 'number' ? mediaInfo.fragmentDuration : (typeof mediaInfo.segmentDuration === 'number' ? mediaInfo.segmentDuration : defaultSegDuration);
                         const downloadTimeNext = nextKb > 0 && predictedKbps > 0 ? (nextKb * segDur2) / predictedKbps : Infinity;
-                        const budgetFloorNext = 0.30 * segDur2;
+                        const budgetFloorNext = 0.35 * segDur2;
                         const budgetOkNext = typeof bufferLevel === 'number' ? (downloadTimeNext <= Math.max(bufferLevel * effBeta, budgetFloorNext)) : true;
                         const gateOkNext = (typeof bufferLevel === 'number' && bufferLevel >= effBufThr) || (downloadTimeNext <= segDur2 * effFastFrac) || allowBypass;
                         const marginOkNext = predictedKbps >= nextKb * effMargin;
@@ -263,7 +259,7 @@ function CustomAbrRule(context) {
                     let bestIndex = lastIndex !== null ? lastIndex : 0;
                     let bestScore = -Infinity;
                     const segDur = typeof mediaInfo.fragmentDuration === 'number' ? mediaInfo.fragmentDuration : (typeof mediaInfo.segmentDuration === 'number' ? mediaInfo.segmentDuration : defaultSegDuration);
-                    const budgetFloor = 0.30 * segDur;
+                    const budgetFloor = 0.35 * segDur;
                     for (let i = 0; i < sorted.length; i++) {
                         const kb = (sorted[i].bitrateInKbit || sorted[i].bitrate || 0);
                         const downloadTime = kb > 0 && predictedKbps > 0 ? (kb * segDur) / predictedKbps : Infinity;

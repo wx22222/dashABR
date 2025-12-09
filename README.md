@@ -26,6 +26,7 @@
 - `python/analysis/` 分析脚本
   - `python/analysis/compare_abr.py`
   - `python/analysis/compare_abr_time_norm.py`
+  - `python/analysis/compare_predictors_oboe.py`
 
 ## 功能
 - 自定义 MPD URL 输入并手动加载，不自动播放（`index.html:15–18`，`main.js:45–53`）。
@@ -92,6 +93,7 @@
 - ONNX Runtime Web（CDN 引入，`index.html:10`）
 - 现代浏览器（支持 MSE）
 - 任意静态服务器用于本地开发（示例 `python -m http.server 8081`）
+- Python 分析脚本依赖：`numpy matplotlib statsmodels onnxruntime`
 
 ## 训练与导出（可选）
 - 安装依赖：`python -m pip install numpy torch onnx`
@@ -109,3 +111,19 @@
 - 自定义输入：
   - `python python/analysis/compare_abr.py <LoLp.csv> <CustomRule.csv>`
   - `python python/analysis/compare_abr_time_norm.py <LoLp.csv> <CustomRule.csv> [dt]`
+
+### 预测方法对比（LSTM/EWMA/ARIMA）
+- 安装依赖：`python -m pip install onnxruntime statsmodels matplotlib`
+- 运行示例（Oboe 数据集，单位 Kbps，时间步 `dt=0.5s`，历史长度 `hist_len=30`，单步预测 `pred_horizon=1`）：
+  - `python python/analysis/compare_predictors_oboe.py --oboe_dir datasets/oboe --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 428 --to_kbps`
+- 可选参数：
+  - `--alpha`（EWMA 平滑系数，默认 `0.6`）
+  - `--arima_p --arima_d --arima_q`（ARIMA 阶数，默认 `1 0 1`）
+  - `--cfg_path --onnx_path`（LSTM 配置与模型路径，默认 `assets/models/`）
+  - `--example_trace_idx / --example_trace_path`（输出单条轨迹的拟合时序图）
+    - `python python/analysis/compare_predictors_oboe.py --oboe_dir e:\work\personwork\project\dashABR-main\dashABR-main\datasets\oboe --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 50 --to_kbps --example_trace_idx 0 `
+- 输出图表（生成到 `assets/images/`）：
+  - `predict_compare_summary.png`（MAE/RMSE/MAPE/R² 概览柱状图）
+  - `predict_compare_error_hist.png`（误差分布直方图）
+  - `predict_compare_scatter.png`（真实值 vs 预测值散点图）
+  - `predict_fit_example.png`（单步预测拟合时序示例）
