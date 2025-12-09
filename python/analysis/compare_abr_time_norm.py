@@ -285,58 +285,54 @@ def _rel_sec(times):
     t0 = times[0]
     return [(t - t0).total_seconds() for t in times]
 
-def plot_summary(m1, m2, n1, n2, out_path):
+def plot_summary(metrics_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
     fig, axs = plt.subplots(2, 3, figsize=(12, 7))
+    colors = ['#4C78A8','#F58518','#54A24B','#E45756']
+    x = names
     ax = axs[0][0]
-    ax.bar([n1, n2], [m1.get("avg_bitrate"), m2.get("avg_bitrate")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("avg_bitrate") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("时间均值码率(kbps)")
     ax = axs[0][1]
-    ax.bar([n1, n2], [m1.get("avg_latency"), m2.get("avg_latency")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("avg_latency") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("时间均值延迟(s)")
     ax = axs[0][2]
-    ax.bar([n1, n2], [m1.get("p95_latency"), m2.get("p95_latency")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("p95_latency") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("时间采样95分位延迟(s)")
     ax = axs[1][0]
-    ax.bar([n1, n2], [m1.get("rebuffer_fraction"), m2.get("rebuffer_fraction")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("rebuffer_fraction") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("重缓冲时间占比")
     ax = axs[1][1]
-    ax.bar([n1, n2], [m1.get("quality_switches_per_min"), m2.get("quality_switches_per_min")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("quality_switches_per_min") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("质量切换/分钟")
     ax = axs[1][2]
-    ax.bar([n1, n2], [m1.get("qoe_mean"), m2.get("qoe_mean")], color=['#4C78A8','#F58518'])
+    ax.bar(x, [m.get("qoe_mean") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("时间均值QoE")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
 
-def plot_timeseries(t1, s1, t2, s2, n1, n2, out_path):
+def plot_timeseries(times_list, series_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
-    rt1 = _rel_sec(t1)
-    rt2 = _rel_sec(t2)
-    b1 = s1["bitrateKbps"]
-    b2 = s2["bitrateKbps"]
-    buf1 = s1["bufferLevel"]
-    buf2 = s2["bufferLevel"]
-    lat1 = s1["liveLatency"]
-    lat2 = s2["liveLatency"]
+    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
+    rel_times = [_rel_sec(t) for t in times_list]
     fig, axs = plt.subplots(3, 1, figsize=(12, 9), sharex=False)
     ax = axs[0]
-    ax.plot(rt1, b1, label=n1, color="#4C78A8")
-    ax.plot(rt2, b2, label=n2, color="#F58518")
+    for i in range(len(names)):
+        ax.plot(rel_times[i], series_list[i]["bitrateKbps"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("码率(kbps)")
     ax.set_title("时间归一化码率")
     ax.legend()
     ax = axs[1]
-    ax.plot(rt1, buf1, label=n1, color="#4C78A8")
-    ax.plot(rt2, buf2, label=n2, color="#F58518")
+    for i in range(len(names)):
+        ax.plot(rel_times[i], series_list[i]["bufferLevel"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("缓冲(s)")
     ax.set_title("时间归一化缓冲")
     ax = axs[2]
-    ax.plot(rt1, lat1, label=n1, color="#4C78A8")
-    ax.plot(rt2, lat2, label=n2, color="#F58518")
+    for i in range(len(names)):
+        ax.plot(rel_times[i], series_list[i]["liveLatency"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("延时(s)")
     ax.set_title("时间归一化延时")
     ax.set_xlabel("时间(s)")
@@ -344,30 +340,27 @@ def plot_timeseries(t1, s1, t2, s2, n1, n2, out_path):
     fig.savefig(out_path)
     plt.close(fig)
 
-def plot_quality_dist(series1, series2, n1, n2, out_path):
+def plot_quality_dist(series_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
-    q1 = [v for v in series1["qualityIndex"] if v is not None]
-    q2 = [v for v in series2["qualityIndex"] if v is not None]
-    c1 = Counter(q1)
-    c2 = Counter(q2)
+    q_list = [[v for v in s["qualityIndex"] if v is not None] for s in series_list]
+    counters = [Counter(q) for q in q_list]
     max_q = 0
-    if c1:
-        max_q = max(max_q, max(c1.keys()))
-    if c2:
-        max_q = max(max_q, max(c2.keys()))
+    for c in counters:
+        if c:
+            max_q = max(max_q, max(c.keys()))
     idxs = list(range(max_q+1))
-    v1 = [c1.get(i,0) for i in idxs]
-    v2 = [c2.get(i,0) for i in idxs]
-    s1 = sum(v1) if v1 else 0
-    s2 = sum(v2) if v2 else 0
-    f1 = [(x/s1 if s1>0 else 0) for x in v1]
-    f2 = [(x/s2 if s2>0 else 0) for x in v2]
+    fracs = []
+    for c in counters:
+        v = [c.get(i,0) for i in idxs]
+        s = sum(v) if v else 0
+        fracs.append([(x/s if s>0 else 0) for x in v])
     x = list(range(len(idxs)))
-    w = 0.4
+    w = 0.8 / max(1, len(names))
+    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
     fig, ax = plt.subplots(figsize=(12,5))
-    ax.bar([i-w/2 for i in x], f1, width=w, label=n1, color="#4C78A8")
-    ax.bar([i+w/2 for i in x], f2, width=w, label=n2, color="#F58518")
+    for j in range(len(names)):
+        ax.bar([i - 0.4 + w*j for i in x], fracs[j], width=w, label=names[j], color=colors[j % len(colors)])
     ax.set_xticks(x)
     ax.set_xticklabels([str(i) for i in idxs])
     ax.set_xlabel("质量档位")
@@ -392,40 +385,79 @@ def align_duration(rows1, rows2):
         return None
     return (s1, s1 + datetime.timedelta(seconds=cd), s2, s2 + datetime.timedelta(seconds=cd))
 
+def align_duration_multi(rows_list):
+    if not rows_list:
+        return None
+    durs = []
+    for rows in rows_list:
+        if not rows:
+            return None
+        s = rows[0]["ts"]
+        e = rows[-1]["ts"]
+        durs.append((s, e))
+    cd = min((e - s).total_seconds() for s, e in durs)
+    if cd <= 0:
+        return None
+    return [(s, s + datetime.timedelta(seconds=cd)) for s, e in durs]
+
 def main():
     base_dir = os.getcwd()
-    p1 = os.path.join(base_dir, "assets", "data", "dash_stat_lolp_oboe.csv")
-    p2 = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_oboe.csv")
+    p_lolp = os.path.join(base_dir, "assets", "data", "dash_stats_lolp_fcc.csv")
+    p_l2a = os.path.join(base_dir, "assets", "data", "dash_stats_l2a_fcc.csv")
+    p_custom = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_fcc.csv")
+    p_bola = os.path.join(base_dir, "assets", "data", "dash_stats_bola_fcc.csv")
     dt = 0.5
     args = sys.argv[1:]
-    if len(args) >= 2:
-        p1 = args[0]
-        p2 = args[1]
-    if len(args) >= 3:
+    if len(args) >= 4:
+        p_lolp = args[0]
+        p_l2a = args[1]
+        p_custom = args[2]
+        p_bola = args[3]
+    if len(args) >= 5:
         try:
-            dt = float(args[2])
+            dt = float(args[4])
         except Exception:
             dt = 0.5
-    rows1 = load_rows(p1)
-    rows2 = load_rows(p2)
-    aligned = align_duration(rows1, rows2)
-    if aligned is None:
+    rows_lolp = load_rows(p_lolp)
+    rows_l2a = load_rows(p_l2a)
+    rows_custom = load_rows(p_custom)
+    rows_bola = load_rows(p_bola)
+    datasets = [("LoLp", rows_lolp), ("L2A", rows_l2a), ("CustomRule", rows_custom), ("Bola", rows_bola)]
+    datasets = [(n, r) for (n, r) in datasets if r]
+    if len(datasets) < 2:
         print("No aligned duration")
         return
-    s1_t0, s1_t1, s2_t0, s2_t1 = aligned
-    t1, s1 = resample_rows(rows1, dt, s1_t0, s1_t1)
-    t2, s2 = resample_rows(rows2, dt, s2_t0, s2_t1)
-    m1 = compute_time_metrics(t1, s1, dt)
-    m2 = compute_time_metrics(t2, s2, dt)
-    print_time_metrics("LoLp-Time", m1)
-    print_time_metrics("CustomRule-Time", m2)
-    compare_time(m2, m1, "CustomRule-Time", "LoLp-Time")
+    rows_list = [r for (_, r) in datasets]
+    names = [n for (n, _) in datasets]
+    aligned_multi = align_duration_multi(rows_list)
+    if aligned_multi is None:
+        print("No aligned duration")
+        return
+    times_list = []
+    series_list = []
+    for i in range(len(rows_list)):
+        t0, t1 = aligned_multi[i]
+        ti, si = resample_rows(rows_list[i], dt, t0, t1)
+        times_list.append(ti)
+        series_list.append(si)
+    metrics_list = [compute_time_metrics(times_list[i], series_list[i], dt) for i in range(len(names))]
+    for i in range(len(names)):
+        print_time_metrics(names[i] + "-Time", metrics_list[i])
+    baseline_idx = 0
+    for i in range(len(names)):
+        if names[i].lower().startswith("lolp"):
+            baseline_idx = i
+            break
+    for i in range(len(names)):
+        if i == baseline_idx:
+            continue
+        compare_time(metrics_list[i], metrics_list[baseline_idx], names[i] + "-Time", names[baseline_idx] + "-Time")
     out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.png")
     out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.png")
     out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.png")
-    plot_summary(m1, m2, "LoLp", "CustomRule", out_summary)
-    plot_timeseries(t1, s1, t2, s2, "LoLp", "CustomRule", out_ts)
-    plot_quality_dist(s1, s2, "LoLp", "CustomRule", out_qdist)
+    plot_summary(metrics_list, names, out_summary)
+    plot_timeseries(times_list, series_list, names, out_ts)
+    plot_quality_dist(series_list, names, out_qdist)
 
 if __name__ == "__main__":
     main()

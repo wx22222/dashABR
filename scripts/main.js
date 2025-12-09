@@ -34,9 +34,9 @@ document.addEventListener('DOMContentLoaded', function () {
                         'throughputRule': { 'active': false },
                         'bolaRule': { 'active': false },
                         'insufficientBufferRule': { 'active': false },
-                        'switchHistoryRule': { 'active': true },
+                        'switchHistoryRule': { 'active': false },
                         'droppedFramesRule': { 'active': false },
-                        'abandonRequestsRule': { 'active': true },
+                        'abandonRequestsRule': { 'active': false },
                         'l2ARule': { 'active': false },
                         'loLPRule': { 'active': false }
                     }
