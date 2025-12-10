@@ -23,16 +23,16 @@ function CustomAbrRule(context) {
             const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
-            const safetyFactor = 0.93;
+            const safetyFactor = 0.95;
             const maxStepUp = 2;
-            const upswitchBufferThreshold = 0.8;
-            const upswitchMargin = 1.15;
-            const betaBudget = 1.0;
+            const upswitchBufferThreshold = 0.75;
+            const upswitchMargin = 1.12;
+            const betaBudget = 1.03;
             const defaultSegDuration = 0.5;
             const wBitrate = 1.0;
-            const wRebuffer = 3.6;
+            const wRebuffer = 3.4;
             const wLatency = 0.2;
-            const fastDownloadFrac = 0.85;
+            const fastDownloadFrac = 0.88;
             const targetLatency = 2.0;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
@@ -68,7 +68,7 @@ function CustomAbrRule(context) {
                         if (bufferLevel >= 1.5) {
                             effMargin = 1.02;
                             effBufThr = 0.5;
-                            effMaxUp = 3;
+                            effMaxUp = 2;
                             effBeta = 1.10;
                             effWRebuffer = 2.6;
                             wFast = 0.85;
@@ -96,12 +96,12 @@ function CustomAbrRule(context) {
                     } else {
                         if (typeof bufferLevel === 'number') {
                             if (bufferLevel >= 1.5) {
-                                effSafety = Math.max(effSafety, 0.96);
+                                effSafety = Math.max(effSafety, 0.97);
                                 effMargin = Math.min(effMargin, 1.03);
-                                effMaxUp = Math.max(effMaxUp, 3);
+                                effMaxUp = Math.max(effMaxUp, 2);
                             } else if (bufferLevel >= 1.0) {
-                                effSafety = Math.max(effSafety, 0.93);
-                                effMargin = Math.min(effMargin, 1.06);
+                                effSafety = Math.max(effSafety, 0.94);
+                                effMargin = Math.min(effMargin, 1.05);
                                 effMaxUp = Math.max(effMaxUp, 2);
                             }
                         }
@@ -234,7 +234,7 @@ function CustomAbrRule(context) {
                     if (lastIndex === 0 && typeof bufferLevel === 'number' && bufferLevel < 0.2) {
                         const nextIdxProbe = Math.min(sorted.length - 1, 1);
                         const nextKbProbe = (sorted[nextIdxProbe].bitrateInKbit || sorted[nextIdxProbe].bitrate || 0);
-                        if (nextKbProbe > 0 && predictedKbps >= nextKbProbe * 1.2) {
+                        if (nextKbProbe > 0 && predictedKbps >= nextKbProbe * 1.18) {
                             allowBypass = true;
                         }
                     }
