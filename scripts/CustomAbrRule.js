@@ -149,7 +149,7 @@ function CustomAbrRule(context) {
                     if (!lstmSession && !lstmLoading) {
                         lstmLoading = true;
                         try {
-                            fetch('assets/models/fcc_lstm_cfg.json').then(function(r){return r.json();}).then(function(cfg){
+                            fetch('assets/models/oboe_lstm_cfg.json').then(function(r){return r.json();}).then(function(cfg){
                                 lstmCfg = cfg || {};
                                 const hp = (lstmCfg && typeof lstmCfg.hist_len==='number') ? lstmCfg.hist_len : 30;
                                 lstmCfg = {
@@ -160,7 +160,7 @@ function CustomAbrRule(context) {
                                     ys: typeof cfg.ys==='number'?cfg.ys:1.0
                                 };
                                 if (typeof ort !== 'undefined' && ort && typeof ort.InferenceSession !== 'undefined') {
-                                    ort.InferenceSession.create('assets/models/fcc_lstm.onnx').then(function(s){
+                                    ort.InferenceSession.create('assets/models/oboe_lstm.onnx').then(function(s){
                                         lstmSession = s;
                                         lstmLoading = false;
                                     }).catch(function(){lstmLoading=false;});
