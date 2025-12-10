@@ -306,6 +306,94 @@ def plot_fit_timeseries(times, y, y_lstm, y_ewma, y_arima, out_path):
     fig.savefig(out_path)
     plt.close(fig)
 
+def plot_step_response(ks, d_lstm, d_ewma, d_arima, out_path):
+    _setup_fonts()
+    fig, axs = plt.subplots(1, 3, figsize=(15,4))
+    x = np.arange(len(ks))
+    w = 0.25
+    def series(d, prefix):
+        if d is None:
+            return None
+        return [d.get(prefix + str(k)) for k in ks]
+    m_l = series(d_lstm, 'mae@')
+    m_e = series(d_ewma, 'mae@')
+    m_a = series(d_arima, 'mae@')
+    r_l = series(d_lstm, 'rmse@')
+    r_e = series(d_ewma, 'rmse@')
+    r_a = series(d_arima, 'rmse@')
+    o_l = series(d_lstm, 'overshoot@')
+    o_e = series(d_ewma, 'overshoot@')
+    o_a = series(d_arima, 'overshoot@')
+    def bars(ax, l, e, a, title):
+        if l is not None:
+            ax.bar(x - w, l, width=w, label='LSTM', color='#4C78A8')
+        if e is not None:
+            ax.bar(x, e, width=w, label='EWMA', color='#F58518')
+        if a is not None:
+            ax.bar(x + w, a, width=w, label='ARIMA', color='#54A24B')
+        ax.set_title(title)
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(k) for k in ks])
+        ax.legend()
+    bars(axs[0], m_l, m_e, m_a, 'Step MAE')
+    bars(axs[1], r_l, r_e, r_a, 'Step RMSE')
+    bars(axs[2], o_l, o_e, o_a, 'Overshoot Rate')
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+def detect_change_points(y, dt, threshold):
+    arr = np.array(y, dtype=np.float32)
+    if arr.size < 2:
+        return []
+    d = np.diff(arr)
+    s = np.abs(d) / (dt if dt > 0 else 1.0)
+    idx = np.where(s >= float(threshold))[0] + 1
+    return [int(i) for i in idx]
+
+def step_response_metrics(y, yhat, cps, ks):
+    out = {}
+    if yhat is None or y is None or len(y) == 0:
+        for k in ks:
+            out[f"mae@{k}"] = float('nan')
+            out[f"rmse@{k}"] = float('nan')
+            out[f"overshoot@{k}"] = float('nan')
+        return out
+    ya = np.array(y, dtype=np.float32)
+    yh = np.array(yhat, dtype=np.float32)
+    for k in ks:
+        errs = []
+        overs = 0
+        tot = 0
+        for cp in cps:
+            t = cp + int(k)
+            if t < ya.shape[0] and t < yh.shape[0] and cp < ya.shape[0]:
+                e = float(yh[t] - ya[t])
+                errs.append(e)
+                delta = float(ya[t] - ya[cp])
+                if delta != 0 and e * delta < 0:
+                    overs += 1
+                tot += 1
+        if errs:
+            ae = np.mean(np.abs(np.array(errs, dtype=np.float32)))
+            re = np.sqrt(np.mean(np.array(errs, dtype=np.float32) ** 2))
+            out[f"mae@{k}"] = float(ae)
+            out[f"rmse@{k}"] = float(re)
+            out[f"overshoot@{k}"] = float(overs) / float(tot) if tot > 0 else float('nan')
+        else:
+            out[f"mae@{k}"] = float('nan')
+            out[f"rmse@{k}"] = float('nan')
+            out[f"overshoot@{k}"] = float('nan')
+    return out
+
+def print_step_metrics(name, d, ks):
+    print(f"[{name}-StepResponse]")
+    for k in ks:
+        print(f"step_mae@{k}={fmt(d.get('mae@'+str(k)))}")
+        print(f"step_rmse@{k}={fmt(d.get('rmse@'+str(k)))}")
+        print(f"overshoot_rate@{k}={fmt(d.get('overshoot@'+str(k)))}")
+    print("")
+
 def collect_series(fcc_dir, dt, hist_len, pred_horizon, max_traces, to_kbps=False):
     paths = sorted(glob.glob(os.path.join(fcc_dir, "test_fcc_trace_*")))
     if max_traces is not None and max_traces > 0:
@@ -346,6 +434,10 @@ def main():
     ap.add_argument("--onnx_path", default=os.path.join(os.getcwd(), "assets", "models", "fcc_lstm.onnx"))
     ap.add_argument("--example_trace_idx", type=int, default=0)
     ap.add_argument("--example_trace_path", default=None)
+    ap.add_argument("--example_t0", type=float, default=None)
+    ap.add_argument("--example_t1", type=float, default=None)
+    ap.add_argument("--cp_threshold", type=float, default=1000.0)
+    ap.add_argument("--step_ks", default="1,2,3")
     args = ap.parse_args()
     t0 = time.time()
     X, y = collect_series(args.fcc_dir, args.dt, args.hist_len, args.pred_horizon, args.max_traces, to_kbps=args.to_kbps)
@@ -420,6 +512,24 @@ def main():
         print(f"time_per_step_s={fmt(arima_step)}")
     else:
         print("ARIMA=NA")
+    try:
+        ks = [int(x.strip()) for x in str(args.step_ks).split(",") if x.strip()]
+    except Exception:
+        ks = [1, 2, 3]
+    cps_all = detect_change_points(y, args.dt, args.cp_threshold)
+    d_lstm = step_response_metrics(y, yhat_lstm, cps_all, ks)
+    print_step_metrics("LSTM_ONNX", d_lstm, ks)
+    d_ewma = step_response_metrics(y, yhat_ewma, cps_all, ks)
+    print_step_metrics("EWMA", d_ewma, ks)
+    if yhat_arima is not None and y_arima_truth is not None:
+        cps_ar = detect_change_points(y_arima_truth, args.dt, args.cp_threshold)
+        d_arima = step_response_metrics(y_arima_truth, yhat_arima, cps_ar, ks)
+        print_step_metrics("ARIMA", d_arima, ks)
+    out_step = os.path.join(os.path.join(os.getcwd(), "assets", "images"), "predict_step_response_fcc.png")
+    try:
+        plot_step_response(ks, d_lstm, d_ewma, d_arima if yhat_arima is not None and y_arima_truth is not None else None, out_step)
+    except Exception:
+        pass
     base_dir = os.getcwd()
     img_dir = os.path.join(base_dir, "assets", "images")
     try:
@@ -454,7 +564,21 @@ def main():
                 yh_lstm, _ = lstm_predict(Xi, args.cfg_path, args.onnx_path)
                 yh_ewma, _ = ewma_predict_windows(Xi, args.alpha)
                 yh_arima, _ = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
-                ts = [ (args.hist_len + k) * args.dt for k in range(len(yi)) ]
+                ts = np.array([ (args.hist_len + k) * args.dt for k in range(len(yi)) ], dtype=np.float32)
+                if args.example_t0 is not None and args.example_t1 is not None:
+                    m = (ts >= float(args.example_t0)) & (ts <= float(args.example_t1))
+                    if np.any(m):
+                        ts = ts[m]
+                        yi = yi[m]
+                        if yh_lstm is not None:
+                            yh_lstm = yh_lstm[m]
+                        if yh_ewma is not None:
+                            yh_ewma = yh_ewma[m]
+                        if yh_arima is not None:
+                            try:
+                                yh_arima = yh_arima[m]
+                            except Exception:
+                                pass
                 out_fit = os.path.join(img_dir, "predict_fit_example_fcc.png")
                 plot_fit_timeseries(ts, yi, yh_lstm, yh_ewma, yh_arima, out_fit)
     except Exception:

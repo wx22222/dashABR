@@ -57,6 +57,7 @@ def build_xy(series, hist_len, pred_horizon):
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32)
 
 def ewma_predict_windows(X, alpha):
+    t0 = time.perf_counter()
     preds = []
     for i in range(X.shape[0]):
         xh = X[i]
@@ -65,13 +66,15 @@ def ewma_predict_windows(X, alpha):
             vv = float(v)
             ew = vv if ew is None else (alpha * vv + (1 - alpha) * ew)
         preds.append(float(ew) if ew is not None else float(xh[-1]))
-    return np.array(preds, dtype=np.float32)
+    t1 = time.perf_counter()
+    per_step = (t1 - t0) / float(X.shape[0]) if X.shape[0] > 0 else float('nan')
+    return np.array(preds, dtype=np.float32), per_step
 
 def arima_predict(series, hist_len, pred_horizon, order=(1,0,1)):
     try:
         from statsmodels.tsa.arima.model import ARIMA
     except Exception:
-        return None
+        return None, None
     try:
         m = ARIMA(np.array(series, dtype=np.float32), order=order)
         res = m.fit()
@@ -79,17 +82,21 @@ def arima_predict(series, hist_len, pred_horizon, order=(1,0,1)):
         start = hist_len
         end = n - pred_horizon
         if end < start:
-            return None
+            return None, None
+        t0 = time.perf_counter()
         pred = res.predict(start=start, end=end)
-        return np.array(pred, dtype=np.float32)
+        t1 = time.perf_counter()
+        steps = max(0, (end - start + 1))
+        per_step = (t1 - t0) / float(steps) if steps > 0 else float('nan')
+        return np.array(pred, dtype=np.float32), per_step
     except Exception:
-        return None
+        return None, None
 
 def lstm_predict(X, cfg_path, onnx_path):
     try:
         import onnxruntime as ort
     except Exception:
-        return None
+        return None, None
     try:
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -100,22 +107,27 @@ def lstm_predict(X, cfg_path, onnx_path):
         hlen = int(cfg.get("hist_len", X.shape[1]))
         if hlen != X.shape[1]:
             print("onnx_hist_len_mismatch")
-            return None
+            return None, None
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         inp_name = sess.get_inputs()[0].name
         Xn = (X - xm) / (xs if xs != 0 else 1.0)
         out = []
+        t_sum = 0.0
         for i in range(Xn.shape[0]):
             inp = Xn[i:i+1].astype(np.float32)
             feeds = {inp_name: inp}
+            t0 = time.perf_counter()
             r = sess.run(None, feeds)
+            t1 = time.perf_counter()
+            t_sum += (t1 - t0)
             yhat = np.array(r[0]).reshape((-1,))
             yv = yhat * (ys if ys != 0 else 1.0) + ym
             out.append(yv.astype(np.float32))
-        return np.concatenate(out, axis=0)
+        per_step = t_sum / float(Xn.shape[0]) if Xn.shape[0] > 0 else float('nan')
+        return np.concatenate(out, axis=0), per_step
     except Exception as e:
         print(f"onnx_predict_failed {e}")
-        return None
+        return None, None
 
 def _mean(arr):
     if arr.size == 0:
@@ -296,6 +308,94 @@ def plot_fit_timeseries(times, y, y_lstm, y_ewma, y_arima, out_path):
     fig.savefig(out_path)
     plt.close(fig)
 
+def plot_step_response(ks, d_lstm, d_ewma, d_arima, out_path):
+    _setup_fonts()
+    fig, axs = plt.subplots(1, 3, figsize=(15,4))
+    x = np.arange(len(ks))
+    w = 0.25
+    def series(d, prefix):
+        if d is None:
+            return None
+        return [d.get(prefix + str(k)) for k in ks]
+    m_l = series(d_lstm, 'mae@')
+    m_e = series(d_ewma, 'mae@')
+    m_a = series(d_arima, 'mae@')
+    r_l = series(d_lstm, 'rmse@')
+    r_e = series(d_ewma, 'rmse@')
+    r_a = series(d_arima, 'rmse@')
+    o_l = series(d_lstm, 'overshoot@')
+    o_e = series(d_ewma, 'overshoot@')
+    o_a = series(d_arima, 'overshoot@')
+    def bars(ax, l, e, a, title):
+        if l is not None:
+            ax.bar(x - w, l, width=w, label='LSTM', color='#4C78A8')
+        if e is not None:
+            ax.bar(x, e, width=w, label='EWMA', color='#F58518')
+        if a is not None:
+            ax.bar(x + w, a, width=w, label='ARIMA', color='#54A24B')
+        ax.set_title(title)
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(k) for k in ks])
+        ax.legend()
+    bars(axs[0], m_l, m_e, m_a, 'Step MAE')
+    bars(axs[1], r_l, r_e, r_a, 'Step RMSE')
+    bars(axs[2], o_l, o_e, o_a, 'Overshoot Rate')
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+def detect_change_points(y, dt, threshold):
+    arr = np.array(y, dtype=np.float32)
+    if arr.size < 2:
+        return []
+    d = np.diff(arr)
+    s = np.abs(d) / (dt if dt > 0 else 1.0)
+    idx = np.where(s >= float(threshold))[0] + 1
+    return [int(i) for i in idx]
+
+def step_response_metrics(y, yhat, cps, ks):
+    out = {}
+    if yhat is None or y is None or len(y) == 0:
+        for k in ks:
+            out[f"mae@{k}"] = float('nan')
+            out[f"rmse@{k}"] = float('nan')
+            out[f"overshoot@{k}"] = float('nan')
+        return out
+    ya = np.array(y, dtype=np.float32)
+    yh = np.array(yhat, dtype=np.float32)
+    for k in ks:
+        errs = []
+        overs = 0
+        tot = 0
+        for cp in cps:
+            t = cp + int(k)
+            if t < ya.shape[0] and t < yh.shape[0] and cp < ya.shape[0]:
+                e = float(yh[t] - ya[t])
+                errs.append(e)
+                delta = float(ya[t] - ya[cp])
+                if delta != 0 and e * delta < 0:
+                    overs += 1
+                tot += 1
+        if errs:
+            ae = np.mean(np.abs(np.array(errs, dtype=np.float32)))
+            re = np.sqrt(np.mean(np.array(errs, dtype=np.float32) ** 2))
+            out[f"mae@{k}"] = float(ae)
+            out[f"rmse@{k}"] = float(re)
+            out[f"overshoot@{k}"] = float(overs) / float(tot) if tot > 0 else float('nan')
+        else:
+            out[f"mae@{k}"] = float('nan')
+            out[f"rmse@{k}"] = float('nan')
+            out[f"overshoot@{k}"] = float('nan')
+    return out
+
+def print_step_metrics(name, d, ks):
+    print(f"[{name}-StepResponse]")
+    for k in ks:
+        print(f"step_mae@{k}={fmt(d.get('mae@'+str(k)))}")
+        print(f"step_rmse@{k}={fmt(d.get('rmse@'+str(k)))}")
+        print(f"overshoot_rate@{k}={fmt(d.get('overshoot@'+str(k)))}")
+    print("")
+
 def collect_series(oboe_dir, dt, hist_len, pred_horizon, max_traces, to_kbps=False):
     paths = sorted(glob.glob(os.path.join(oboe_dir, "trace_*.txt")))
     if max_traces is not None and max_traces > 0:
@@ -336,6 +436,10 @@ def main():
     ap.add_argument("--onnx_path", default=os.path.join(os.getcwd(), "assets", "models", "oboe_lstm.onnx"))
     ap.add_argument("--example_trace_idx", type=int, default=0)
     ap.add_argument("--example_trace_path", default=None)
+    ap.add_argument("--example_t0", type=float, default=None)
+    ap.add_argument("--example_t1", type=float, default=None)
+    ap.add_argument("--cp_threshold", type=float, default=1000.0)
+    ap.add_argument("--step_ks", default="1,2,3")
     args = ap.parse_args()
     t0 = time.time()
     X, y = collect_series(args.oboe_dir, args.dt, args.hist_len, args.pred_horizon, args.max_traces, to_kbps=args.to_kbps)
@@ -344,17 +448,21 @@ def main():
         return
     print(f"dataset_shapes X={X.shape} y={y.shape}")
     t1 = time.time()
-    yhat_lstm = lstm_predict(X, args.cfg_path, args.onnx_path)
+    yhat_lstm, lstm_step = lstm_predict(X, args.cfg_path, args.onnx_path)
     t2 = time.time()
-    yhat_ewma = ewma_predict_windows(X, args.alpha)
+    yhat_ewma, ewma_step = ewma_predict_windows(X, args.alpha)
     t3 = time.time()
     yhat_arima = None
+    y_arima_truth = None
+    arima_step = None
     try:
         paths = sorted(glob.glob(os.path.join(args.oboe_dir, "trace_*.txt")))
         if args.max_traces is not None and args.max_traces > 0:
             paths = paths[:args.max_traces]
         preds = []
         truths = []
+        total_pred_time = 0.0
+        total_steps = 0
         for p in paths:
             tr = load_trace(p, to_kbps=args.to_kbps)
             s = to_uniform_series(tr, args.dt)
@@ -363,14 +471,18 @@ def main():
             y_local = []
             for i in range(args.hist_len, len(s) - args.pred_horizon + 1):
                 y_local.append(sum(s[i:i + args.pred_horizon]) / float(args.pred_horizon))
-            pred_local = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
+            pred_local, step_local = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
             if pred_local is None or len(pred_local) != len(y_local):
                 continue
             preds.append(np.array(pred_local, dtype=np.float32))
             truths.append(np.array(y_local, dtype=np.float32))
+            if step_local is not None and math.isfinite(step_local):
+                total_pred_time += step_local * float(len(pred_local))
+                total_steps += int(len(pred_local))
         if preds and truths:
             yhat_arima = np.concatenate(preds, axis=0)
             y_arima_truth = np.concatenate(truths, axis=0)
+            arima_step = (total_pred_time / float(total_steps)) if total_steps > 0 else None
         else:
             yhat_arima = None
             y_arima_truth = None
@@ -385,20 +497,43 @@ def main():
         m_lstm = metrics(y, yhat_lstm)
         print_metrics("LSTM_ONNX", m_lstm)
         print(f"time_s={fmt(t2 - t1)}")
+        print(f"time_per_step_s={fmt(lstm_step)}")
     else:
         print("LSTM_ONNX=NA")
     if yhat_ewma is not None:
         m_ewma = metrics(y, yhat_ewma)
         print_metrics("EWMA", m_ewma)
         print(f"time_s={fmt(t3 - t2)}")
+        print(f"time_per_step_s={fmt(ewma_step)}")
     else:
         print("EWMA=NA")
     if yhat_arima is not None and y_arima_truth is not None:
         m_arima = metrics(y_arima_truth, yhat_arima)
         print_metrics("ARIMA", m_arima)
         print(f"time_s={fmt(t4 - t3)}")
+        print(f"time_per_step_s={fmt(arima_step)}")
     else:
         print("ARIMA=NA")
+
+    try:
+        ks = [int(x.strip()) for x in str(args.step_ks).split(",") if x.strip()]
+    except Exception:
+        ks = [1, 2, 3]
+    cps_all = detect_change_points(y, args.dt, args.cp_threshold)
+    d_lstm = step_response_metrics(y, yhat_lstm, cps_all, ks)
+    print_step_metrics("LSTM_ONNX", d_lstm, ks)
+    d_ewma = step_response_metrics(y, yhat_ewma, cps_all, ks)
+    print_step_metrics("EWMA", d_ewma, ks)
+    if yhat_arima is not None and y_arima_truth is not None:
+        cps_ar = detect_change_points(y_arima_truth, args.dt, args.cp_threshold)
+        d_arima = step_response_metrics(y_arima_truth, yhat_arima, cps_ar, ks)
+        print_step_metrics("ARIMA", d_arima, ks)
+
+    out_step = os.path.join(os.path.join(os.getcwd(), "assets", "images"), "predict_step_response_oboe.png")
+    try:
+        plot_step_response(ks, d_lstm, d_ewma, d_arima if yhat_arima is not None and y_arima_truth is not None else None, out_step)
+    except Exception:
+        pass
 
     base_dir = os.getcwd()
     img_dir = os.path.join(base_dir, "assets", "images")
@@ -406,9 +541,9 @@ def main():
         os.makedirs(img_dir, exist_ok=True)
     except Exception:
         pass
-    out_summary = os.path.join(img_dir, "predict_compare_summary.png")
-    out_hist = os.path.join(img_dir, "predict_compare_error_hist.png")
-    out_scatter = os.path.join(img_dir, "predict_compare_scatter.png")
+    out_summary = os.path.join(img_dir, "predict_compare_summary_oboe.png")
+    out_hist = os.path.join(img_dir, "predict_compare_error_hist_oboe.png")
+    out_scatter = os.path.join(img_dir, "predict_compare_scatter_oboe.png")
     plot_summary_bars(m_lstm, m_ewma, m_arima, out_summary)
     y_for_hist = y
     y_lstm = yhat_lstm if yhat_lstm is not None else None
@@ -432,38 +567,32 @@ def main():
             s = to_uniform_series(tr, args.dt)
             Xi, yi = build_xy(s, args.hist_len, args.pred_horizon)
             if Xi is not None and yi is not None and len(yi) > 0:
-                yh_lstm = lstm_predict(Xi, args.cfg_path, args.onnx_path)
-                yh_ewma = ewma_predict_windows(Xi, args.alpha)
-                yh_arima = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
+                yh_lstm, _ = lstm_predict(Xi, args.cfg_path, args.onnx_path)
+                yh_ewma, _ = ewma_predict_windows(Xi, args.alpha)
+                yh_arima, _ = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
                 ts = [ (args.hist_len + k) * args.dt for k in range(len(yi)) ]
-                out_fit = os.path.join(img_dir, "predict_fit_example.png")
+                if args.example_t0 is not None and args.example_t1 is not None:
+                    try:
+                        ts_arr = np.array(ts, dtype=np.float32)
+                        msk = (ts_arr >= float(args.example_t0)) & (ts_arr <= float(args.example_t1))
+                        if np.any(msk):
+                            ts = list(ts_arr[msk])
+                            yi = yi[msk]
+                            if yh_lstm is not None:
+                                yh_lstm = yh_lstm[msk]
+                            if yh_ewma is not None:
+                                yh_ewma = yh_ewma[msk]
+                            if yh_arima is not None:
+                                try:
+                                    yh_arima = yh_arima[msk]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                out_fit = os.path.join(img_dir, "predict_fit_example_oboe.png")
                 plot_fit_timeseries(ts, yi, yh_lstm, yh_ewma, yh_arima, out_fit)
     except Exception:
         pass
 
 if __name__ == "__main__":
     main()
-
-def plot_scatter(y, y_lstm, y_ewma, y_arima, out_path, sample_n=10000):
-    _setup_fonts()
-    idx = np.arange(len(y))
-    if len(idx) > sample_n:
-        rng = np.random.default_rng(123)
-        idx = rng.choice(idx, size=sample_n, replace=False)
-    ys = y[idx]
-    fig, axs = plt.subplots(1, 3, figsize=(15,4))
-    def one(ax, yh, name, color):
-        if yh is None:
-            ax.axis('off')
-            ax.set_title(f'{name} (NA)')
-            return
-        ax.scatter(ys, yh[idx], s=5, alpha=0.3, color=color)
-        ax.set_xlabel('真实值 y')
-        ax.set_ylabel('预测值 yhat')
-        ax.set_title(name)
-    one(axs[0], y_lstm, 'LSTM', '#4C78A8')
-    one(axs[1], y_ewma, 'EWMA', '#F58518')
-    one(axs[2], y_arima, 'ARIMA', '#54A24B')
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
