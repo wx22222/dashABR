@@ -44,6 +44,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
 
+        try {
+            if (typeof window !== 'undefined') {
+                window.dashPlayer = player;
+            }
+        } catch (e) {}
+
         setupStatsUpdate();
 
         player.on(dashjs.MediaPlayer.events.BUFFER_EMPTY, function () {
@@ -182,9 +188,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            // Add the rule
-            // 'QualitySwitchRules' is the collection of rules for quality switching
-            player.addABRCustomRule('qualitySwitchRules', 'CustomAbrRule', CustomAbrRule);
+            const injectedFactory = function(context) {
+                const factory = CustomAbrRule(context);
+                return {
+                    create: function() {
+                        return factory.create({ dashMetrics: player.getDashMetrics() });
+                    }
+                };
+            };
+            player.addABRCustomRule('qualitySwitchRules', 'CustomAbrRule', injectedFactory);
             
             // Usually we need to update settings to prioritize or enable custom rules if needed,
             // but addABRCustomRule should inject it. 

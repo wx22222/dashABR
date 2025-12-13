@@ -8,7 +8,7 @@ function CustomAbrRule(context) {
     const factory = dashjs.FactoryMaker;
     const SwitchRequestFactory = factory.getClassFactoryByName('SwitchRequest');
     return {
-        create: function () {
+        create: function (config) {
             let ewmaFast = null;
             let ewmaSlow = null;
             let lastIndex = null;
@@ -20,6 +20,7 @@ function CustomAbrRule(context) {
             let predKbpsLstm = null;
             let lastMs = null;
             let bucketTime = 0.0;
+            let ruleCfg = config || {};
             const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
@@ -43,20 +44,15 @@ function CustomAbrRule(context) {
                     const streamInfo = rulesContext.getStreamInfo();
                     const abrController = rulesContext.getAbrController();
                     const scheduleController = rulesContext.getScheduleController();
-                    const dashMetrics = rulesContext.getDashMetrics ? rulesContext.getDashMetrics() : null;
+                    let dashMetrics = ruleCfg && ruleCfg.dashMetrics ? ruleCfg.dashMetrics : null;
+
+                   
                     const throughputController = rulesContext.getThroughputController ? rulesContext.getThroughputController() : null;
                     const playbackController = scheduleController && typeof scheduleController.getPlaybackController === 'function' ? scheduleController.getPlaybackController() : null;
 
                     const switchRequest = SwitchRequestFactory(context).create();
-                    let bufferLevel = null;
-                    if (dashMetrics && typeof dashMetrics.getCurrentBufferLevel === 'function') {
-                        bufferLevel = dashMetrics.getCurrentBufferLevel(mediaType);
-                    } else if (scheduleController && typeof scheduleController.getBufferController === 'function') {
-                        const bc = scheduleController.getBufferController();
-                        if (bc && typeof bc.getBufferLevel === 'function') {
-                            bufferLevel = bc.getBufferLevel();
-                        }
-                    }
+                    let bufferLevel = null;  
+                    bufferLevel = dashMetrics.getCurrentBufferLevel(mediaType)
                     let effSafety = safetyFactor;
                     let effMargin = upswitchMargin;
                     let effBufThr = upswitchBufferThreshold;
@@ -64,48 +60,18 @@ function CustomAbrRule(context) {
                     let effBeta = betaBudget;
                     let effWRebuffer = wRebuffer;
                     let wFast = 0.5;
-                    if (typeof bufferLevel === 'number') {
-                        if (bufferLevel >= 1.5) {
-                            effMargin = 1.02;
-                            effBufThr = 0.5;
-                            effMaxUp = 2;
-                            effBeta = 1.10;
-                            effWRebuffer = 2.6;
-                            wFast = 0.85;
-                        } else if (bufferLevel >= 1.0) {
-                            effMargin = 1.05;
-                            effBufThr = 0.7;
-                            effMaxUp = 2;
-                            effBeta = 1.05;
-                            wFast = 0.7;
-                        }
-                    }
                     let liveLatency = null;
-                    if (playbackController && typeof playbackController.getLiveLatency === 'function') {
-                        liveLatency = playbackController.getLiveLatency();
+                    if (playbackController) {
+                        if (typeof playbackController.getCurrentLiveLatency === 'function') {
+                            liveLatency = playbackController.getCurrentLiveLatency();
+                        } else if (typeof playbackController.getLiveLatency === 'function') {
+                            liveLatency = playbackController.getLiveLatency();
+                        }
                     }
                     let effWLatency = wLatency;
                     let effFastFrac = fastDownloadFrac;
                     const latHigh = typeof liveLatency === 'number' && liveLatency > targetLatency;
-                    if (latHigh) {
-                        effWLatency = Math.max(wLatency, 0.5);
-                        effFastFrac = Math.min(fastDownloadFrac, 0.65);
-                        effMargin = Math.max(effMargin, 1.15);
-                        effMaxUp = Math.min(effMaxUp, 1);
-                        effBufThr = Math.max(effBufThr, 0.8);
-                    } else {
-                        if (typeof bufferLevel === 'number') {
-                            if (bufferLevel >= 1.5) {
-                                effSafety = Math.max(effSafety, 0.97);
-                                effMargin = Math.min(effMargin, 1.03);
-                                effMaxUp = Math.max(effMaxUp, 2);
-                            } else if (bufferLevel >= 1.0) {
-                                effSafety = Math.max(effSafety, 0.94);
-                                effMargin = Math.min(effMargin, 1.05);
-                                effMaxUp = Math.max(effMaxUp, 2);
-                            }
-                        }
-                    }
+
                     const isDynamic = !!(streamInfo && streamInfo.manifestInfo && streamInfo.manifestInfo.isDynamic);
 
                     const reps = abrController && typeof abrController.getPossibleVoRepresentationsFilteredBySettings === 'function'
@@ -120,15 +86,6 @@ function CustomAbrRule(context) {
                         const bb = (b.bitrateInKbit || b.bitrate || 0);
                         return ba - bb;
                     });
-
-                    const emergency = typeof bufferLevel === 'number' && bufferLevel < 0.3;
-                    if (emergency) {
-                        switchRequest.representation = sorted[0];
-                        switchRequest.priority = 1;
-                        switchRequest.reason = { bufferLevel: bufferLevel };
-                        lastIndex = 0;
-                        return switchRequest;
-                    }
 
                     let measurementKbps = null;
                     if (throughputController && typeof throughputController.getSafeAverageThroughput === 'function') {
@@ -310,7 +267,7 @@ function CustomAbrRule(context) {
 
                     switchRequest.representation = sorted[bestIndex];
                     switchRequest.priority = 0.5;
-                    switchRequest.reason = { predictedKbps: Math.round(predictedKbps), bufferLevel: bufferLevel };
+                    switchRequest.reason = { predictedKbps: Math.round(predictedKbps) };
                     lastIndex = bestIndex;
 
                     return switchRequest;
