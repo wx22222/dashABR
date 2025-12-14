@@ -13,6 +13,7 @@ function CustomAbrRule(context) {
             let ewmaSlow = null;
             let lastIndex = null;
             let goodCount = 0;
+            let lastSwitchTimeMs = null;
             let lstmSession = null;
             let lstmCfg = null;
             let lstmLoading = false;
@@ -35,6 +36,11 @@ function CustomAbrRule(context) {
             const wLatency = 0.2;
             const fastDownloadFrac = 0.88;
             const targetLatency = 2.0;
+            const downswitchMargin = 0.95;
+            const minSwitchInterval = 3.4;
+            const throughputGuardLow = 0.7;
+            const throughputGuardDefault = 0.85;
+            const throughputGuardHigh = 1.05;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
                 getSwitchRequest: function (rulesContext) { return this.checkIndex(rulesContext); },
@@ -71,6 +77,14 @@ function CustomAbrRule(context) {
                     let effWLatency = wLatency;
                     let effFastFrac = fastDownloadFrac;
                     const latHigh = typeof liveLatency === 'number' && liveLatency > targetLatency;
+                    let effThroughputGuard = throughputGuardDefault;
+                    if (typeof bufferLevel === 'number') {
+                        if (bufferLevel < 1.0) {
+                            effThroughputGuard = throughputGuardLow;
+                        } else if (bufferLevel > 4.0) {
+                            effThroughputGuard = throughputGuardHigh;
+                        }
+                    }
 
                     const isDynamic = !!(streamInfo && streamInfo.manifestInfo && streamInfo.manifestInfo.isDynamic);
 
@@ -173,9 +187,12 @@ function CustomAbrRule(context) {
 
                     ewmaFast = ewmaFast === null ? measurementKbps : (alphaFast * measurementKbps + (1 - alphaFast) * ewmaFast);
                     ewmaSlow = ewmaSlow === null ? measurementKbps : (alphaSlow * measurementKbps + (1 - alphaSlow) * ewmaSlow);
-                    let predictedKbpsBase = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
+                    const ewmaCombined = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
+                    let predictedKbpsBase = ewmaCombined;
                     if (predKbpsLstm && isFinite(predKbpsLstm) && predKbpsLstm > 0) {
-                        predictedKbpsBase = predKbpsLstm;
+                        if (predKbpsLstm < ewmaCombined) {
+                            predictedKbpsBase = predKbpsLstm;
+                        }
                     }
                     let predictedKbps = predictedKbpsBase * effSafety;
                     if (typeof window !== 'undefined') {
@@ -219,6 +236,9 @@ function CustomAbrRule(context) {
                     const budgetFloor = 0.35 * segDur;
                     for (let i = 0; i < sorted.length; i++) {
                         const kb = (sorted[i].bitrateInKbit || sorted[i].bitrate || 0);
+                        if (i > 0 && kb > predictedKbps * effThroughputGuard) {
+                            continue;
+                        }
                         const downloadTime = kb > 0 && predictedKbps > 0 ? (kb * segDur) / predictedKbps : Infinity;
                         const buf = typeof bufferLevel === 'number' ? bufferLevel : 0;
                         const rebuffer = downloadTime > buf ? (downloadTime - buf) : 0;
@@ -263,6 +283,27 @@ function CustomAbrRule(context) {
                             }
                         }
                         bestIndex = fallback;
+                    }
+
+                    const nowSwitchMs = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+                    if (lastIndex !== null && bestIndex !== lastIndex) {
+                        const sinceLast = lastSwitchTimeMs !== null ? (nowSwitchMs - lastSwitchTimeMs) / 1000.0 : Infinity;
+                        if (bestIndex > lastIndex) {
+                            if (sinceLast < minSwitchInterval) {
+                                bestIndex = lastIndex;
+                            } else {
+                                lastSwitchTimeMs = nowSwitchMs;
+                            }
+                        } else {
+                            const currentKb = (sorted[lastIndex].bitrateInKbit || sorted[lastIndex].bitrate || 0);
+                            if (!(predictedKbps < currentKb * downswitchMargin) && sinceLast < minSwitchInterval) {
+                                bestIndex = lastIndex;
+                            } else {
+                                lastSwitchTimeMs = nowSwitchMs;
+                            }
+                        }
+                    } else if (lastIndex === null && bestIndex !== null) {
+                        lastSwitchTimeMs = nowSwitchMs;
                     }
 
                     switchRequest.representation = sorted[bestIndex];
