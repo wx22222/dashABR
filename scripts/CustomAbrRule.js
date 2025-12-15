@@ -9,8 +9,8 @@ function CustomAbrRule(context) {
     const SwitchRequestFactory = factory.getClassFactoryByName('SwitchRequest');
     return {
         create: function (config) {
-            let ewmaFast = null;
-            let ewmaSlow = null;
+            // let ewmaFast = null;
+            // let ewmaSlow = null;
             let lastIndex = null;
             let goodCount = 0;
             let lastSwitchTimeMs = null;
@@ -23,9 +23,9 @@ function CustomAbrRule(context) {
             let bucketTime = 0.0;
             let ruleCfg = config || {};
             const aggDt = 0.5;
-            const alphaFast = 0.6;
-            const alphaSlow = 0.25;
-            const safetyFactor = 1.0;
+            // const alphaFast = 0.6;
+            // const alphaSlow = 0.25;
+            const safetyFactor = 0.95;
             const maxStepUp = 2;
             const upswitchBufferThreshold = 0.75;
             const upswitchMargin = 1.12;
@@ -102,17 +102,7 @@ function CustomAbrRule(context) {
                     });
 
                     let measurementKbps = null;
-                    if (throughputController && typeof throughputController.getSafeAverageThroughput === 'function') {
-                        measurementKbps = throughputController.getSafeAverageThroughput(mediaType);
-                    } else if (abrController && typeof abrController.getThroughputHistory === 'function') {
-                        try {
-                            const th = abrController.getThroughputHistory();
-                            if (th && typeof th.getAverageThroughput === 'function') {
-                                measurementKbps = th.getAverageThroughput(mediaType, isDynamic);
-                            }
-                        } catch (e) {}
-                    }
-
+                    measurementKbps = throughputController.getSafeAverageThroughput(mediaType);
                     if (!measurementKbps || !isFinite(measurementKbps) || measurementKbps <= 0) {
                         return switchRequest;
                     }
@@ -189,13 +179,12 @@ function CustomAbrRule(context) {
                         }
                     } catch(e){}
 
-                    ewmaFast = ewmaFast === null ? measurementKbps : (alphaFast * measurementKbps + (1 - alphaFast) * ewmaFast);
-                    ewmaSlow = ewmaSlow === null ? measurementKbps : (alphaSlow * measurementKbps + (1 - alphaSlow) * ewmaSlow);
-                    const ewmaCombined = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
-                    let predictedKbpsBase = ewmaCombined;
+                    // ewmaFast = ewmaFast === null ? measurementKbps : (alphaFast * measurementKbps + (1 - alphaFast) * ewmaFast);
+                    // ewmaSlow = ewmaSlow === null ? measurementKbps : (alphaSlow * measurementKbps + (1 - alphaSlow) * ewmaSlow);
+                    // const ewmaCombined = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
+                    let predictedKbpsBase;
                     if (predKbpsLstm && isFinite(predKbpsLstm) && predKbpsLstm > 0) {
                         predictedKbpsBase = predKbpsLstm;
-                        console.log('predictedKbp',predKbpsLstm);
                     }
                     let predictedKbps = predictedKbpsBase * effSafety;
                     if (typeof window !== 'undefined') {
