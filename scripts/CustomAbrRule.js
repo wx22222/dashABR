@@ -25,7 +25,7 @@ function CustomAbrRule(context) {
             const aggDt = 0.5;
             const alphaFast = 0.6;
             const alphaSlow = 0.25;
-            const safetyFactor = 0.95;
+            const safetyFactor = 1.0;
             const maxStepUp = 2;
             const upswitchBufferThreshold = 0.75;
             const upswitchMargin = 1.12;
@@ -159,6 +159,7 @@ function CustomAbrRule(context) {
                         const hlen = (lstmCfg && lstmCfg.hist_len) ? lstmCfg.hist_len : 30;
                         if (histSeries.length > hlen) histSeries = histSeries.slice(histSeries.length - hlen);
                         const ready = lstmSession && histSeries.length >= hlen;
+                  
                         if (ready) {
                             const xm = lstmCfg.xm || 0.0;
                             const xs = lstmCfg.xs || 1.0;
@@ -170,10 +171,13 @@ function CustomAbrRule(context) {
                                 inp[i] = (v - xm) / (xs || 1.0);
                             }
                             const feeds = { hist: new ort.Tensor('float32', inp, [1, hlen]) };
+                        
                             lstmSession.run(feeds).then(function(o){
                                 const pred = o && o.pred && o.pred.data && o.pred.data[0];
+                              
                                 if (typeof pred === 'number' && isFinite(pred)) {
                                     const kbps = pred * (ys || 1.0) + (ym || 0.0);
+                                  
                                     if (kbps > 0 && isFinite(kbps)) {
                                         predKbpsLstm = kbps;
                                         if (typeof window !== 'undefined') {
@@ -190,9 +194,8 @@ function CustomAbrRule(context) {
                     const ewmaCombined = (wFast * ewmaFast + (1 - wFast) * ewmaSlow);
                     let predictedKbpsBase = ewmaCombined;
                     if (predKbpsLstm && isFinite(predKbpsLstm) && predKbpsLstm > 0) {
-                        if (predKbpsLstm < ewmaCombined) {
-                            predictedKbpsBase = predKbpsLstm;
-                        }
+                        predictedKbpsBase = predKbpsLstm;
+                        console.log('predictedKbp',predKbpsLstm);
                     }
                     let predictedKbps = predictedKbpsBase * effSafety;
                     if (typeof window !== 'undefined') {

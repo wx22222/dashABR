@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         'switchHistoryRule': { 'active': false },
                         'droppedFramesRule': { 'active': false },
                         'abandonRequestsRule': { 'active': false },
-                        'l2ARule': { 'active': false },
+                        'l2ARule': { 'active': true },
                         'loLPRule': { 'active': false }
                     }
                 }
