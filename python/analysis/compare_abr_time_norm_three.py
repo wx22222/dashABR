@@ -199,13 +199,22 @@ def compute_time_metrics(times, series, dt):
                 prev_t = None
     avg_recover_seconds = _mean(recs)
     qoe = []
+    prev_b_for_switch = None
     for i in range(N):
         bi = b[i]
         li = lat[i]
         rbi = 1 if rb[i] else 0
         bs = math.log(1 + bi) if bi is not None and bi > 0 else 0.0
         lp = li if li is not None and li >= 0 else 0.0
-        qv = bs - 4.0 * rbi - 0.2 * lp
+        switch_penalty = 0.0
+        if prev_b_for_switch is not None and bi is not None and bi > 0 and prev_b_for_switch > 0 and bi != prev_b_for_switch:
+            max_b = max(bi, prev_b_for_switch)
+            if max_b > 0:
+                rel_change = abs(bi - prev_b_for_switch) / max_b
+                switch_penalty = 0.5 * rel_change
+        if bi is not None and bi > 0:
+            prev_b_for_switch = bi
+        qv = bs - 3.5 * rbi - 0.15 * lp - switch_penalty
         qoe.append(qv)
     qoe_mean = _mean(qoe)
     return {

@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', function () {
             },
             'streaming': {
                 'buffer': {
-                    'fastSwitchEnabled': true
+                    'fastSwitchEnabled': false
                 },
                 'liveCatchup': {
                     'enabled': true

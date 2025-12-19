@@ -25,29 +25,30 @@ function CustomAbrRule(context) {
             const aggDt = 0.5;
             // const alphaFast = 0.6;
             // const alphaSlow = 0.25;
-            const safetyFactor = 0.95;
-            const maxStepUp = 2;
-            const upswitchBufferThreshold = 0.75;
-            const upswitchMargin = 1.12;
-            const betaBudget = 1.03;
+            const safetyFactor = 1.03;
+            const maxStepUp = 3;
+            const upswitchBufferThreshold = 0.5;
+            const upswitchMargin = 1.03;
+            const betaBudget = 1.1;
             const defaultSegDuration = 0.5;
             const wBitrate = 1.0;
-            const wRebuffer = 3.4;
-            const wLatency = 0.2;
-            const fastDownloadFrac = 0.88;
+            const wRebuffer = 3.5;
+            const wLatency = 0.15;
+            const wSwitch = 0.7;
+            const fastDownloadFrac = 0.9;
             const targetLatency = 2.0;
-            const downswitchMargin = 0.95;
+            const downswitchMargin = 0.9;
             const minSwitchInterval = 3.4;
             const throughputGuardLow = 0.7;
-            const throughputGuardDefault = 0.85;
-            const throughputGuardHigh = 1.05;
+            const throughputGuardDefault = 1.0;
+            const throughputGuardHigh = 1.15;
             return {
                 getClassName: function () { return 'CustomAbrRule'; },
                 getSwitchRequest: function (rulesContext) { return this.checkIndex(rulesContext); },
                 checkIndex: function (rulesContext) {
                     const mediaInfo = rulesContext.getMediaInfo();
                     const mediaType = mediaInfo.type;
-                    const streamInfo = rulesContext.getStreamInfo();
+                    // const streamInfo = rulesContext.getStreamInfo();
                     const abrController = rulesContext.getAbrController();
                     const scheduleController = rulesContext.getScheduleController();
                     let dashMetrics = ruleCfg && ruleCfg.dashMetrics ? ruleCfg.dashMetrics : null;
@@ -65,7 +66,7 @@ function CustomAbrRule(context) {
                     let effMaxUp = maxStepUp;
                     let effBeta = betaBudget;
                     let effWRebuffer = wRebuffer;
-                    let wFast = 0.5;
+                    // let wFast = 0.5;
                     let liveLatency = null;
                     if (playbackController) {
                         if (typeof playbackController.getCurrentLiveLatency === 'function') {
@@ -85,8 +86,6 @@ function CustomAbrRule(context) {
                             effThroughputGuard = throughputGuardHigh;
                         }
                     }
-
-                    const isDynamic = !!(streamInfo && streamInfo.manifestInfo && streamInfo.manifestInfo.isDynamic);
 
                     const reps = abrController && typeof abrController.getPossibleVoRepresentationsFilteredBySettings === 'function'
                         ? abrController.getPossibleVoRepresentationsFilteredBySettings(mediaInfo, true)
@@ -257,7 +256,16 @@ function CustomAbrRule(context) {
 
                         const bitrateScore = Math.log(1 + kb);
                         const latencyPenaltyCandidate = latHigh ? Math.max(0, downloadTime - segDur) : 0;
-                        const score = wBitrate * bitrateScore - effWRebuffer * rebuffer - effWLatency * latencyPenaltyCandidate;
+                        let switchPenalty = 0;
+                        if (lastIndex !== null && i !== lastIndex) {
+                            const lastKb = (sorted[lastIndex].bitrateInKbit || sorted[lastIndex].bitrate || 0);
+                            const maxKb = Math.max(kb, lastKb);
+                            if (maxKb > 0) {
+                                const relChange = Math.abs(kb - lastKb) / maxKb;
+                                switchPenalty = wSwitch * relChange;
+                            }
+                        }
+                        const score = wBitrate * bitrateScore - effWRebuffer * rebuffer - effWLatency * latencyPenaltyCandidate - switchPenalty;
                         if (score > bestScore) {
                             bestScore = score;
                             bestIndex = i;
@@ -275,6 +283,10 @@ function CustomAbrRule(context) {
                             }
                         }
                         bestIndex = fallback;
+                    }
+
+                    if (lastIndex !== null && bestIndex < lastIndex - 1) {
+                        bestIndex = Math.max(0, lastIndex - 1);
                     }
 
                     const nowSwitchMs = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
