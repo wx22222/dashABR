@@ -411,24 +411,21 @@ def align_duration_multi(rows_list):
 
 def main():
     base_dir = os.getcwd()
-    p_lolp = os.path.join(base_dir, "assets", "data", "dash_stats_lolp_fcc.csv")
-    p_l2a = os.path.join(base_dir, "assets", "data", "dash_stats_l2a_fcc.csv")
-    p_custom = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_fcc.csv")
+    p_ewma = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_ewma_fcc1.csv")
+    p_lstm = os.path.join(base_dir, "assets", "data", "dash_stats_customrule_fcc1.csv")
     dt = 0.5
     args = sys.argv[1:]
+    if len(args) >= 2:
+        p_ewma = args[0]
+        p_lstm = args[1]
     if len(args) >= 3:
-        p_lolp = args[0]
-        p_l2a = args[1]
-        p_custom = args[2]
-    if len(args) >= 4:
         try:
-            dt = float(args[3])
+            dt = float(args[2])
         except Exception:
             dt = 0.5
-    rows_lolp = load_rows(p_lolp)
-    rows_l2a = load_rows(p_l2a)
-    rows_custom = load_rows(p_custom)
-    datasets = [("LoLp", rows_lolp), ("L2A", rows_l2a), ("CustomRule", rows_custom)]
+    rows_ewma = load_rows(p_ewma)
+    rows_lstm = load_rows(p_lstm)
+    datasets = [("CustomRule_onlyEWMA", rows_ewma), ("CustomRule_onlyLSTM", rows_lstm)]
     datasets = [(n, r) for (n, r) in datasets if r]
     if len(datasets) < 2:
         print("No aligned duration")
@@ -451,19 +448,16 @@ def main():
         print_time_metrics(names[i] + "-Time", metrics_list[i])
     baseline_idx = 0
     for i in range(len(names)):
-        if names[i].lower().startswith("lolp"):
-            baseline_idx = i
-            break
-    for i in range(len(names)):
         if i == baseline_idx:
             continue
         compare_time(metrics_list[i], metrics_list[baseline_idx], names[i] + "-Time", names[baseline_idx] + "-Time")
-    out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.png")
-    out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.png")
-    out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.png")
+    out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_two_summary.png")
+    out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_two_timeseries.png")
+    out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_two_quality_dist.png")
     plot_summary(metrics_list, names, out_summary)
     plot_timeseries(times_list, series_list, names, out_ts)
     plot_quality_dist(series_list, names, out_qdist)
 
 if __name__ == "__main__":
     main()
+
