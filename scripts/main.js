@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         'switchHistoryRule': { 'active': false },
                         'droppedFramesRule': { 'active': false },
                         'abandonRequestsRule': { 'active': false },
-                        'l2ARule': { 'active': true },
+                        'l2ARule': { 'active': false },
                         'loLPRule': { 'active': false }
                     }
                 }
@@ -166,7 +166,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `dash_stats_${Date.now()}.csv`;
+            a.download = `dash_stats_customrule_ewma_oboe.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
