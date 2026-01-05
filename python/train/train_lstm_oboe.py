@@ -122,10 +122,11 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
             return y.squeeze(-1)
     model = M()
     opt = optim.Adam(model.parameters(), lr=lr)
-    try:
-        loss_fn = nn.SmoothL1Loss(beta=float(huber_beta))
-    except TypeError:
-        loss_fn = nn.SmoothL1Loss()
+    # try:
+    #     loss_fn = nn.SmoothL1Loss(beta=float(huber_beta))
+    # except TypeError:
+    #     loss_fn = nn.SmoothL1Loss()
+    loss_fn = nn.L1Loss()
     tr_ds = torch.utils.data.TensorDataset(torch.from_numpy(Xtr_n), torch.from_numpy(ytr_n))
     val_ds = torch.utils.data.TensorDataset(torch.from_numpy(Xval_n), torch.from_numpy(yval_n))
     tr_loader = torch.utils.data.DataLoader(tr_ds, batch_size=batch_size, shuffle=True)

@@ -7,6 +7,8 @@ import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
 
+COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+
 def _to_float(x):
     try:
         if x is None or x == "":
@@ -298,7 +300,7 @@ def plot_summary(metrics_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
     fig, axs = plt.subplots(2, 3, figsize=(12, 7))
-    colors = ['#4C78A8','#F58518','#54A24B','#E45756']
+    colors = COLOR_PALETTE
     x = names
     ax = axs[0][0]
     ax.bar(x, [m.get("avg_bitrate") for m in metrics_list], color=colors[:len(names)])
@@ -322,10 +324,26 @@ def plot_summary(metrics_list, names, out_path):
     fig.savefig(out_path)
     plt.close(fig)
 
+def plot_extra_metrics(metrics_list, names, out_path):
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
+    plt.rcParams['axes.unicode_minus'] = False
+    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+    colors = COLOR_PALETTE
+    x = names
+    ax = axs[0]
+    ax.bar(x, [(m.get("rebuffer_events_per_min") if m.get("rebuffer_events_per_min") is not None else float("nan")) for m in metrics_list], color=colors[:len(names)])
+    ax.set_title("重缓冲次数/分钟")
+    ax = axs[1]
+    ax.bar(x, [(m.get("avg_switch_magnitude") if m.get("avg_switch_magnitude") is not None else float("nan")) for m in metrics_list], color=colors[:len(names)])
+    ax.set_title("平均质量切换幅度")
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
 def plot_timeseries(times_list, series_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
-    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
+    colors = COLOR_PALETTE
     rel_times = [_rel_sec(t) for t in times_list]
     fig, axs = plt.subplots(3, 1, figsize=(12, 9), sharex=False)
     ax = axs[0]
@@ -333,7 +351,7 @@ def plot_timeseries(times_list, series_list, names, out_path):
         ax.plot(rel_times[i], series_list[i]["bitrateKbps"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("码率(kbps)")
     ax.set_title("时间归一化码率")
-    ax.legend()
+    ax.legend(loc="upper left")
     ax = axs[1]
     for i in range(len(names)):
         ax.plot(rel_times[i], series_list[i]["bufferLevel"], label=names[i], color=colors[i % len(colors)])
@@ -366,7 +384,7 @@ def plot_quality_dist(series_list, names, out_path):
         fracs.append([(x/s if s>0 else 0) for x in v])
     x = list(range(len(idxs)))
     w = 0.8 / max(1, len(names))
-    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
+    colors = COLOR_PALETTE
     fig, ax = plt.subplots(figsize=(12,5))
     for j in range(len(names)):
         ax.bar([i - 0.4 + w*j for i in x], fracs[j], width=w, label=names[j], color=colors[j % len(colors)])
@@ -428,7 +446,7 @@ def main():
     rows_lolp = load_rows(p_lolp)
     rows_l2a = load_rows(p_l2a)
     rows_custom = load_rows(p_custom)
-    datasets = [("LoLp", rows_lolp), ("L2A", rows_l2a), ("CustomRule", rows_custom)]
+    datasets = [("LoL+", rows_lolp), ("L2A-LL", rows_l2a), ("CustomRule", rows_custom)]
     datasets = [(n, r) for (n, r) in datasets if r]
     if len(datasets) < 2:
         print("No aligned duration")
@@ -451,7 +469,7 @@ def main():
         print_time_metrics(names[i] + "-Time", metrics_list[i])
     baseline_idx = 0
     for i in range(len(names)):
-        if names[i].lower().startswith("lolp"):
+        if names[i].lower().startswith("lol"):
             baseline_idx = i
             break
     for i in range(len(names)):
@@ -459,9 +477,11 @@ def main():
             continue
         compare_time(metrics_list[i], metrics_list[baseline_idx], names[i] + "-Time", names[baseline_idx] + "-Time")
     out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.png")
+    out_extra = os.path.join(base_dir, "assets", "images", "abr_time_norm_extra_metrics.png")
     out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.png")
     out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.png")
     plot_summary(metrics_list, names, out_summary)
+    plot_extra_metrics(metrics_list, names, out_extra)
     plot_timeseries(times_list, series_list, names, out_ts)
     plot_quality_dist(series_list, names, out_qdist)
 

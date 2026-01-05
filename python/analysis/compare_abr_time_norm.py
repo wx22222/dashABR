@@ -7,6 +7,8 @@ import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
 
+COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+
 def _to_float(x):
     try:
         if x is None or x == "":
@@ -304,7 +306,7 @@ def plot_summary(metrics_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
     fig, axs = plt.subplots(2, 3, figsize=(12, 7))
-    colors = ['#4C78A8','#F58518','#54A24B','#E45756']
+    colors = COLOR_PALETTE
     x = names
     ax = axs[0][0]
     ax.bar(x, [m.get("avg_bitrate") for m in metrics_list], color=colors[:len(names)])
@@ -331,7 +333,7 @@ def plot_summary(metrics_list, names, out_path):
 def plot_timeseries(times_list, series_list, names, out_path):
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
     plt.rcParams['axes.unicode_minus'] = False
-    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
+    colors = COLOR_PALETTE
     rel_times = [_rel_sec(t) for t in times_list]
     fig, axs = plt.subplots(3, 1, figsize=(12, 9), sharex=False)
     ax = axs[0]
@@ -372,7 +374,7 @@ def plot_quality_dist(series_list, names, out_path):
         fracs.append([(x/s if s>0 else 0) for x in v])
     x = list(range(len(idxs)))
     w = 0.8 / max(1, len(names))
-    colors = ["#4C78A8","#F58518","#54A24B","#E45756"]
+    colors = COLOR_PALETTE
     fig, ax = plt.subplots(figsize=(12,5))
     for j in range(len(names)):
         ax.bar([i - 0.4 + w*j for i in x], fracs[j], width=w, label=names[j], color=colors[j % len(colors)])

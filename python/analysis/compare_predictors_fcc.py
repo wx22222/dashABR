@@ -7,6 +7,11 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
+LSTM_COLOR = "#1f77b4"
+EWMA_COLOR = "#ff7f0e"
+ARIMA_COLOR = "#2ca02c"
+TRUTH_COLOR = "#000000"
+
 def load_trace(path, to_kbps=False):
     out = []
     with open(path, "r", encoding="utf-8") as f:
@@ -219,29 +224,21 @@ def plot_summary_bars(m_lstm, m_ewma, m_arima, out_path):
     names = []
     maes = []
     rmses = []
-    mapes = []
-    r2s = []
     def add(name, m):
         names.append(name)
         maes.append(m.get('mae'))
         rmses.append(m.get('rmse'))
-        mapes.append(m.get('mape'))
-        r2s.append(m.get('r2'))
-    if m_lstm is not None:
-        add('LSTM', m_lstm)
     if m_ewma is not None:
         add('EWMA', m_ewma)
     if m_arima is not None:
         add('ARIMA', m_arima)
-    fig, axs = plt.subplots(2, 2, figsize=(10, 7))
-    axs[0][0].bar(names, maes, color=['#4C78A8','#F58518','#54A24B'][:len(names)])
-    axs[0][0].set_title('MAE')
-    axs[0][1].bar(names, rmses, color=['#4C78A8','#F58518','#54A24B'][:len(names)])
-    axs[0][1].set_title('RMSE')
-    axs[1][0].bar(names, mapes, color=['#4C78A8','#F58518','#54A24B'][:len(names)])
-    axs[1][0].set_title('MAPE')
-    axs[1][1].bar(names, r2s, color=['#4C78A8','#F58518','#54A24B'][:len(names)])
-    axs[1][1].set_title('R²')
+    if m_lstm is not None:
+        add('LSTM', m_lstm)
+    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+    axs[0].bar(names, maes, color=[EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR][:len(names)])
+    axs[0].set_title('FCC MAE')
+    axs[1].bar(names, rmses, color=[EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR][:len(names)])
+    axs[1].set_title('FCC RMSE')
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -251,11 +248,11 @@ def plot_error_hist(y, y_lstm, y_ewma, y_arima, out_path):
     fig, ax = plt.subplots(figsize=(10,5))
     bins = 50
     if y_lstm is not None:
-        ax.hist(y_lstm - y, bins=bins, alpha=0.5, density=True, label='LSTM', color='#4C78A8')
+        ax.hist(y_lstm - y, bins=bins, alpha=0.5, density=True, label='LSTM', color=LSTM_COLOR)
     if y_ewma is not None:
-        ax.hist(y_ewma - y, bins=bins, alpha=0.5, density=True, label='EWMA', color='#F58518')
+        ax.hist(y_ewma - y, bins=bins, alpha=0.5, density=True, label='EWMA', color=EWMA_COLOR)
     if y_arima is not None:
-        ax.hist(y_arima - y, bins=bins, alpha=0.5, density=True, label='ARIMA', color='#54A24B')
+        ax.hist(y_arima - y, bins=bins, alpha=0.5, density=True, label='ARIMA', color=ARIMA_COLOR)
     ax.set_title('预测误差分布 (yhat - y)')
     ax.set_xlabel('误差')
     ax.set_ylabel('密度')
@@ -281,9 +278,9 @@ def plot_scatter(y, y_lstm, y_ewma, y_arima, out_path, sample_n=10000):
         ax.set_xlabel('真实值 y')
         ax.set_ylabel('预测值 yhat')
         ax.set_title(name)
-    one(axs[0], y_lstm, 'LSTM', '#4C78A8')
-    one(axs[1], y_ewma, 'EWMA', '#F58518')
-    one(axs[2], y_arima, 'ARIMA', '#54A24B')
+    one(axs[0], y_lstm, 'LSTM', LSTM_COLOR)
+    one(axs[1], y_ewma, 'EWMA', EWMA_COLOR)
+    one(axs[2], y_arima, 'ARIMA', ARIMA_COLOR)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -291,14 +288,14 @@ def plot_scatter(y, y_lstm, y_ewma, y_arima, out_path, sample_n=10000):
 def plot_fit_timeseries(times, y, y_lstm, y_ewma, y_arima, out_path):
     _setup_fonts()
     fig, ax = plt.subplots(figsize=(12,6))
-    ax.plot(times, y, label='真实值', color='#000000')
+    ax.plot(times, y, label='真实值', color=TRUTH_COLOR)
     if y_lstm is not None:
-        ax.plot(times, y_lstm, label='LSTM', color='#4C78A8')
+        ax.plot(times, y_lstm, label='LSTM', color=LSTM_COLOR)
     if y_ewma is not None:
-        ax.plot(times, y_ewma, label='EWMA', color='#F58518')
+        ax.plot(times, y_ewma, label='EWMA', color=EWMA_COLOR)
     if y_arima is not None:
-        ax.plot(times, y_arima, label='ARIMA', color='#54A24B')
-    ax.set_title('预测拟合时序（单步）')
+        ax.plot(times, y_arima, label='ARIMA', color=ARIMA_COLOR)
+    ax.set_title('FCC 预测拟合时序（单步）')
     ax.set_xlabel('时间(s)')
     ax.set_ylabel('吞吐(kbps)')
     ax.legend()
@@ -324,20 +321,20 @@ def plot_step_response(ks, d_lstm, d_ewma, d_arima, out_path):
     o_l = series(d_lstm, 'overshoot@')
     o_e = series(d_ewma, 'overshoot@')
     o_a = series(d_arima, 'overshoot@')
-    def bars(ax, l, e, a, title):
-        if l is not None:
-            ax.bar(x - w, l, width=w, label='LSTM', color='#4C78A8')
+    def bars(ax, e, a, l, title):
         if e is not None:
-            ax.bar(x, e, width=w, label='EWMA', color='#F58518')
+            ax.bar(x - w, e, width=w, label='EWMA', color=EWMA_COLOR)
         if a is not None:
-            ax.bar(x + w, a, width=w, label='ARIMA', color='#54A24B')
+            ax.bar(x, a, width=w, label='ARIMA', color=ARIMA_COLOR)
+        if l is not None:
+            ax.bar(x + w, l, width=w, label='LSTM', color=LSTM_COLOR)
         ax.set_title(title)
         ax.set_xticks(x)
         ax.set_xticklabels([str(k) for k in ks])
         ax.legend()
-    bars(axs[0], m_l, m_e, m_a, 'Step MAE')
-    bars(axs[1], r_l, r_e, r_a, 'Step RMSE')
-    bars(axs[2], o_l, o_e, o_a, 'Overshoot Rate')
+    bars(axs[0], m_e, m_a, m_l, 'FCC Step MAE')
+    bars(axs[1], r_e, r_a, r_l, 'FCC Step RMSE')
+    bars(axs[2], o_e, o_a, o_l, 'FCC Overshoot Rate')
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
