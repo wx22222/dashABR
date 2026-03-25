@@ -343,9 +343,9 @@ def plot_summary_bars(m_lstm, m_ewma, m_arima, m_hca, m_rls, out_path):
     RLS_COLOR = "#FF69B4"
     colors = [EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR, HCA_COLOR, RLS_COLOR][:len(names)]
     axs[0].bar(names, maes, color=colors)
-    axs[0].set_title('FCC MAE')
+    axs[0].set_title('MAE')
     axs[1].bar(names, rmses, color=colors)
-    axs[1].set_title('FCC RMSE')
+    axs[1].set_title('RMSE')
     for ax in axs:
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
