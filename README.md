@@ -1,32 +1,31 @@
-# Dash.js 自定义播放器（ABR 研究）
+# Dash.js 自定义播放器与吞吐量预测研究框架
 
 ## 项目概览
 - 基于 Dash.js 的前端播放器，支持直播/点播 MPD 播放、可自定义流地址、接入自定义 ABR 规则。
-- 集成 ONNX Runtime Web 的 LSTM 吞吐预测（模型与配置位于 `assets/models/`）。
+- 集成多种吞吐量预测模型：EWMA、ARIMA、LSTM (带多头注意力与早停机制)、HCA-KF (卡尔曼滤波) 以及 RLS (递归最小二乘)。
 - 提供实时指标面板（Stats）：缓冲、码率、分辨率、直播延时、预测吞吐、重缓冲提示，并支持导出为 CSV。
 - 采样采用“事件驱动”模式：每当一个视频分片下载完成时采样更新，避免时间采样的遗漏。
 
 ## 目录结构
 - `index.html` 页面入口
 - `styles/` 前端样式
-  - `styles/style.css`
+  - `style.css`
 - `scripts/` 前端脚本
-  - `scripts/main.js` 播放器与指标逻辑
-  - `scripts/CustomAbrRule.js` 自定义 ABR 规则与 LSTM 推理
-- `assets/models/` 模型与配置
-  - `assets/models/fcc_lstm.onnx`、`assets/models/fcc_lstm_cfg.json`
-  - `assets/models/oboe_lstm.onnx`、`assets/models/oboe_lstm_cfg.json`
-- `assets/data/` 指标 CSV（用于分析脚本）
-- `assets/images/` 分析输出图片（汇总、时序、质量分布、步响应）
+  - `main.js` 播放器与指标逻辑
+  - `CustomAbrRule.js` 自定义 ABR 规则与 LSTM 推理
+- `assets/` 模型、数据与图表
+  - `models/` ONNX 模型与 JSON 归一化配置
+  - `data/` 指标 CSV（用于分析脚本）
+  - `images/` 分析输出图片（汇总、时序、质量分布、阶跃响应等）
 - `datasets/` 评测数据集
-  - `datasets/fcc/` FCC 轨迹
-  - `datasets/oboe/` Oboe 轨迹（可选）
-- `python/train/` 训练脚本（可选）
-  - `python/train/train_lstm_oboe.py`
-- `python/analysis/` 分析脚本
-  - `python/analysis/compare_abr_time_norm.py`
-  - `python/analysis/compare_predictors_fcc.py`
-  - `python/analysis/compare_predictors_oboe.py`
+  - `fcc/` FCC 轨迹数据集
+  - `oboe/` Oboe 轨迹数据集
+- `python/` 算法与分析脚本
+  - `train/train_lstm_fcc.py` FCC 数据集的 LSTM 训练脚本
+  - `train/train_lstm_oboe.py` Oboe 数据集的 LSTM 训练脚本
+  - `analysis/compare_abr_time_norm.py` ABR 算法指标归一化对比
+  - `analysis/compare_predictors_fcc.py` 吞吐预测模型在 FCC 上的多维对比
+  - `analysis/compare_predictors_oboe.py` 吞吐预测模型在 Oboe 上的多维对比
 
 ## 功能
 - 自定义 MPD URL 输入并手动加载，不自动播放。
@@ -116,25 +115,26 @@
   - `No aligned duration`：确保各 CSV 存在重叠时间段；导出应来自同一播放会话或相近时段。
   - `pred_to_bitrate_ratio_mean` 为 `NA`：可能缺少 `predictedKbps`，仅在启用自定义规则并接入 LSTM/EWMA 预测时有该字段。
   - 字体显示问题：脚本已设置中文字体回退（`matplotlib`），若仍异常，请检查本机字体与 `matplotlib` 配置。
-- 预测方法对比（FCC 数据集）：
-  - 基本评估：
-    - `python python/analysis/compare_predictors_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 200 --to_kbps --cp_threshold 1000 --step_ks 1,2,3`
+- 预测方法对比（FCC / Oboe 数据集）：
+  - 脚本位置：`python/analysis/compare_predictors_fcc.py` 和 `python/analysis/compare_predictors_oboe.py`
+  - 支持对比的模型：**EWMA, ARIMA, LSTM, HCA-KF (卡尔曼滤波), RLS (递归最小二乘)**
+  - 基本评估（全局指标 + 步响应）：
+    - `python .\python\analysis\compare_predictors_fcc.py  --fcc_dir .\datasets\fcc\  --dt 0.5  --hist_len 40   --pred_horizon 1   --max_traces 263   --to_kbps  --step_ks "1,2,3"`
   - 仅输出窗口拟合（示例 100–200s）：
-    - `python python/analysis/compare_predictors_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 200 --to_kbps --example_t0 100 --example_t1 200`
-  - 可选参数：`--alpha`（EWMA）、`--arima_p --arima_d --arima_q`（ARIMA 阶数）、`--cfg_path --onnx_path`（LSTM 模型与配置）、`--example_trace_idx/--example_trace_path`（指定轨迹）、`--cp_threshold`（变点阈值，`--to_kbps` 时单位为 kbps/s）、`--step_ks`（评估的步数集合）
+    - `python .\python\analysis\compare_predictors_fcc.py  --fcc_dir .\datasets\fcc\  --dt 0.5  --hist_len 40   --pred_horizon 1   --max_traces 263   --to_kbps  --example_t0 100 --example_t1 200`
+  - 可选调优参数：
+    - EWMA: `--alpha`（平滑系数）
+    - ARIMA: `--arima_p --arima_d --arima_q`（阶数）
+    - LSTM: `--cfg_path --onnx_path`（模型与配置）
+    - HCA-KF: `--hca_mu` (误差衰减权重, 默认 0.7), `--hca_omega` (过程噪声方差, 默认 1e-5)
+    - RLS: `--rls_order` (滤波器阶数, 推荐 1), `--rls_forget` (遗忘因子, 推荐 0.99)
+    - 评估控制: `--cp_threshold`（变点阈值）, `--step_ks`（步响应评估的步数集合）
   - 输出图片：
-    - `assets/images/predict_compare_summary_fcc.png`、`predict_compare_error_hist_fcc.png`、`predict_compare_scatter_fcc.png`、`predict_fit_example_fcc.png`
-    - 新增步响应图：`assets/images/predict_step_response_fcc.png`（展示变点后 `k=1,2,3` 的 MAE/RMSE/Overshoot 对比）
-
-- 预测方法对比（Oboe 数据集）：
-  - 基本评估：
-    - `python python/analysis/compare_predictors_oboe.py --oboe_dir datasets/oboe --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 428 --to_kbps --cp_threshold 1000 --step_ks 1,2,3`
-  - 仅输出窗口拟合（支持区间裁剪）：
-    - `python python/analysis/compare_predictors_oboe.py --oboe_dir datasets/oboe --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 428 --to_kbps --example_t0 100 --example_t1 200`
-  - 可选参数同 FCC（目录与模型路径为 Oboe 对应项）
-  - 输出图片：
-    - `assets/images/predict_compare_summary_oboe.png`、`predict_compare_error_hist_oboe.png`、`predict_compare_scatter_oboe.png`、`predict_fit_example_oboe.png`
-    - 新增步响应图：`assets/images/predict_step_response_oboe.png`
+    - `assets/images/predict_compare_summary_*.svg` (MAE/RMSE柱状图)
+    - `assets/images/predict_compare_error_hist_*.svg` (误差分布直方图)
+    - `assets/images/predict_compare_scatter_*.svg` (预测值-真实值散点图)
+    - `assets/images/predict_fit_example_*.svg` (时序拟合对比)
+    - `assets/images/predict_step_response_*.svg` (突变阶跃响应误差)
 
 ## 依赖
 - Dash.js（CDN 引入）
@@ -149,29 +149,31 @@
 - 输出：`assets/models/oboe_lstm.onnx`、`assets/models/oboe_lstm_cfg.json`
 
 ### 训练脚本与模型结构
-- FCC 训练脚本：`python/train/train_lstm_fcc.py`
-  - 模型结构：LSTM（含 `dropout`）+ `Dropout` + 全连接
-  - 损失函数：`SmoothL1Loss`（Huber），参数可用 `--huber_beta` 调整
-  - 常用参数：`--dropout --huber_beta --hist_len --hidden --layers --lr --epochs --batch_size --to_kbps`
+- FCC 和 Oboe 训练脚本（`python/train/train_lstm_fcc.py` 和 `python/train/train_lstm_oboe.py`）已经完全对齐。
+  - **模型结构：** LSTM + **多头自注意力机制 (Multi-Head Attention)** + `Dropout` + 全连接
+  - **损失函数：** `L1Loss` (MAE)
+  - **早停机制：** 支持 `Early Stopping` 避免过拟合，仅保存 `val_loss` 最低的模型
+  - **常用参数：** 
+    - `--dropout` (默认 0.2)
+    - `--patience` (早停容忍轮数，默认 10)
+    - `--hist_len` (历史窗口), `--hidden` (隐层维度), `--layers` (LSTM层数)
+    - `--lr` (学习率), `--epochs` (最大训练轮数), `--batch_size` (批大小)
+    - `--to_kbps` (单位统一转换)
   - 标签：`pred_horizon=1`（下一窗口均值）
-- Oboe 训练脚本：`python/train/train_lstm_oboe.py`
-  - 模型结构与损失已与 FCC 对齐：支持 `dropout` 与 `SmoothL1Loss`
-  - 默认标签：`pred_horizon=1`
-  - 新增参数：`--dropout --huber_beta`
  - 示例命令：
-    - `python python/train/train_lstm_oboe.py --oboe_dir datasets/oboe --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 428 --val_frac 0.1 --hidden 64 --layers 2 --lr 1e-3 --epochs 5 --batch_size 128 --to_kbps --dropout 0.2 --huber_beta 1.0`
+    - `python python/train/train_lstm_oboe.py --oboe_dir datasets/oboe --dt 0.5 --hist_len 40 --pred_horizon 1 --max_traces 428 --val_frac 0.1 --hidden 64 --layers 2 --lr 1e-3 --epochs 15 --batch_size 128 --to_kbps --dropout 0.2 --patience 5`
 
-### FCC 训练脚本命令说明
-- 脚本位置：`python/train/train_lstm_fcc.py`
-- 作用：基于 FCC 轨迹训练单步预测 LSTM，并导出 `PT/ONNX` 与归一化配置。
+### LSTM 训练脚本命令说明
+- 脚本位置：`python/train/train_lstm_fcc.py` / `python/train/train_lstm_oboe.py`
+- 作用：基于轨迹训练单步预测 LSTM，并导出 `PT/ONNX` 与归一化配置。
 
 - 快速入门（推荐参数）：
   - 基本训练（含 ONNX 导出、单位统一为 kbps）：
-    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 200 --val_frac 0.1 --hidden 64 --layers 2 --lr 1e-3 --epochs 5 --batch_size 128 --to_kbps --dropout 0.2 --huber_beta 1.0`
+    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 40 --pred_horizon 1 --max_traces 200 --val_frac 0.1 --hidden 64 --layers 2 --lr 1e-3 --epochs 15 --batch_size 128 --to_kbps --dropout 0.2 --patience 5`
   - 只查看数据切分与形状（不训练）：
-    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 30 --pred_horizon 1 --max_traces 50 --val_frac 0.1 --dry_run`
+    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --dt 0.5 --hist_len 40 --pred_horizon 1 --max_traces 50 --val_frac 0.1 --dry_run`
   - 增加训练规模与轮数（更好拟合）：
-    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --max_traces 428 --epochs 15 --batch_size 128 --dt 0.5 --hist_len 30 --pred_horizon 1 --to_kbps --dropout 0.2 --huber_beta 1.0`
+    - `python python/train/train_lstm_fcc.py --fcc_dir datasets/fcc --max_traces 263 --epochs 15 --batch_size 128 --dt 0.5 --hist_len 40 --pred_horizon 1 --to_kbps --dropout 0.2 `
 
 - 输出文件：
   - `assets/models/fcc_lstm.pt`：权重与元信息（`hist_len, hidden, layers, xm, xs, ym, ys`）
@@ -201,7 +203,8 @@
   - `--dry_run` 无参数值，启用后只做数据与切分检查（`python/train/train_lstm_fcc.py:213`）
   - `--to_kbps` 无参数值，启用后将值乘以 1000 转为 kbps（`python/train/train_lstm_fcc.py:214`）
   - `--dropout` 默认 `0.2`，LSTM 层间与末端 `Dropout` 比例（`python/train/train_lstm_fcc.py:215`）
-  - `--huber_beta` 默认 `1.0`，`SmoothL1Loss` 的 beta（`python/train/train_lstm_fcc.py:216`）
+  - `--huber_beta` 默认 `1.0`，（已被 L1Loss 替代，保留参数兼容性）
+  - `--patience` 默认 `10`，早停容忍轮数，防止过拟合。
 
 - 日志与诊断：
   - 数据集形状与切分：训练前打印 `dataset_shapes` 与 `train_val_shapes`（`python/train/train_lstm_fcc.py:222–224`）

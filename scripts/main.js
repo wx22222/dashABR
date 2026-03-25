@@ -5,10 +5,12 @@ document.addEventListener('DOMContentLoaded', function () {
     const statsOutput = document.querySelector('#stats-output');
     const exportCsvBtn = document.querySelector('#export-csv-btn');
     const enableAbrBtn = document.querySelector('#enable-custom-abr');
+    const enableMpcAbrBtn = document.querySelector('#enable-mpc-abr');
     const abrStatus = document.querySelector('#abr-status');
 
     let player = dashjs.MediaPlayer().create();
     let useCustomAbr = false;
+    let useMpcAbr = false;
     let rebufferFlag = false;
     let statsTimer = null;
 
@@ -32,7 +34,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 'abr': {
                     'rules': {
                         'throughputRule': { 'active': false },
-                        'bolaRule': { 'active': false },
+                        'bolaRule': { 'active': true },
                         'insufficientBufferRule': { 'active': false },
                         'switchHistoryRule': { 'active': false },
                         'droppedFramesRule': { 'active': false },
@@ -166,7 +168,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `dash_stats_customrule_ewma_oboe.csv`;
+            a.download = `dash_stats_mpcrule_oboe.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -179,6 +181,9 @@ document.addEventListener('DOMContentLoaded', function () {
         useCustomAbr = !useCustomAbr;
         
         if (useCustomAbr) {
+            if (typeof player.removeABRCustomRule === 'function') {
+                try { player.removeABRCustomRule('qualitySwitchRules', 'MPCRule'); } catch (e) {}
+            }
             // Register Custom Rule
             // In Dash.js 3.x/4.x, we add custom rules via addABRCustomRule
             
@@ -207,17 +212,57 @@ document.addEventListener('DOMContentLoaded', function () {
 
             abrStatus.textContent = "Status: Custom ABR Enabled";
             enableAbrBtn.textContent = "Disable Custom ABR (Reload required to fully reset)";
+            useMpcAbr = false;
+            if (enableMpcAbrBtn) {
+                enableMpcAbrBtn.textContent = "Enable MPC ABR Rule";
+            }
             
             console.log("Custom ABR Rule Added");
         } else {
-            // Removing rules is trickier, often requires removing all and re-adding defaults or just reloading the player.
-            // For simplicity, we will just notify user to reload.
-            player.removeAllABRCustomRules();
+            if (typeof player.removeABRCustomRule === 'function') {
+                try { player.removeABRCustomRule('qualitySwitchRules', 'CustomAbrRule'); } catch (e) {}
+            }
             abrStatus.textContent = "Status: Default ABR";
             enableAbrBtn.textContent = "Enable Custom ABR Rule";
             console.log("Custom ABR Rule Removed");
         }
     });
 
+    if (enableMpcAbrBtn) {
+        enableMpcAbrBtn.addEventListener('click', function() {
+            useMpcAbr = !useMpcAbr;
+            if (useMpcAbr) {
+                if (typeof player.removeABRCustomRule === 'function') {
+                    try { player.removeABRCustomRule('qualitySwitchRules', 'CustomAbrRule'); } catch (e) {}
+                }
+                if (typeof MPCRule !== 'function') {
+                    alert("MPCRule not found!");
+                    useMpcAbr = false;
+                    return;
+                }
+                const injectedFactory = function(context) {
+                    const factory = MPCRule(context);
+                    return {
+                        create: function() {
+                            return factory.create({ dashMetrics: player.getDashMetrics() });
+                        }
+                    };
+                };
+                player.addABRCustomRule('qualitySwitchRules', 'MPCRule', injectedFactory);
+                abrStatus.textContent = "Status: MPC ABR Enabled";
+                enableMpcAbrBtn.textContent = "Disable MPC ABR (Reload required to fully reset)";
+                useCustomAbr = false;
+                enableAbrBtn.textContent = "Enable Custom ABR Rule";
+                console.log("MPC ABR Rule Added");
+            } else {
+                if (typeof player.removeABRCustomRule === 'function') {
+                    try { player.removeABRCustomRule('qualitySwitchRules', 'MPCRule'); } catch (e) {}
+                }
+                abrStatus.textContent = "Status: Default ABR";
+                enableMpcAbrBtn.textContent = "Enable MPC ABR Rule";
+                console.log("MPC ABR Rule Removed");
+            }
+        });
+    }
     // ... (rest of the code)
 });

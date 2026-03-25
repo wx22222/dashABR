@@ -7,7 +7,10 @@ import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
 
-COLOR_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+COLOR_PALETTE = ["#EECA40", "#FD763F", "#23BAC5", "#9600d4"]
+plt.rcParams["font.size"] = 12
+plt.rcParams["axes.linewidth"] = 1.0
+plt.rcParams["lines.linewidth"] = 1.5
 
 def _to_float(x):
     try:
@@ -320,8 +323,11 @@ def plot_summary(metrics_list, names, out_path):
     ax = axs[1][2]
     ax.bar(x, [m.get("qoe_mean") for m in metrics_list], color=colors[:len(names)])
     ax.set_title("时间均值QoE")
+    for ax in axs.flat:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
 def plot_extra_metrics(metrics_list, names, out_path):
@@ -336,8 +342,11 @@ def plot_extra_metrics(metrics_list, names, out_path):
     ax = axs[1]
     ax.bar(x, [(m.get("avg_switch_magnitude") if m.get("avg_switch_magnitude") is not None else float("nan")) for m in metrics_list], color=colors[:len(names)])
     ax.set_title("平均质量切换幅度")
+    for ax in axs:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
 def plot_timeseries(times_list, series_list, names, out_path):
@@ -350,21 +359,24 @@ def plot_timeseries(times_list, series_list, names, out_path):
     for i in range(len(names)):
         ax.plot(rel_times[i], series_list[i]["bitrateKbps"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("码率(kbps)")
-    ax.set_title("时间归一化码率")
-    ax.legend(loc="upper left")
+
+    ax.legend(loc="lower center",bbox_to_anchor=(0.5, 0.95), ncol=3, frameon=False)
     ax = axs[1]
     for i in range(len(names)):
         ax.plot(rel_times[i], series_list[i]["bufferLevel"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("缓冲(s)")
-    ax.set_title("时间归一化缓冲")
+
     ax = axs[2]
     for i in range(len(names)):
         ax.plot(rel_times[i], series_list[i]["liveLatency"], label=names[i], color=colors[i % len(colors)])
     ax.set_ylabel("延时(s)")
-    ax.set_title("时间归一化延时")
+
     ax.set_xlabel("时间(s)")
+    for ax in axs:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
 def plot_quality_dist(series_list, names, out_path):
@@ -394,8 +406,10 @@ def plot_quality_dist(series_list, names, out_path):
     ax.set_ylabel("占比")
     ax.set_title("时间采样质量分布")
     ax.legend()
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
 def align_duration(rows1, rows2):
@@ -476,10 +490,10 @@ def main():
         if i == baseline_idx:
             continue
         compare_time(metrics_list[i], metrics_list[baseline_idx], names[i] + "-Time", names[baseline_idx] + "-Time")
-    out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.png")
-    out_extra = os.path.join(base_dir, "assets", "images", "abr_time_norm_extra_metrics.png")
-    out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.png")
-    out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.png")
+    out_summary = os.path.join(base_dir, "assets", "images", "abr_time_norm_summary.svg")
+    out_extra = os.path.join(base_dir, "assets", "images", "abr_time_norm_extra_metrics.svg")
+    out_ts = os.path.join(base_dir, "assets", "images", "abr_time_norm_timeseries.svg")
+    out_qdist = os.path.join(base_dir, "assets", "images", "abr_time_norm_quality_dist.svg")
     plot_summary(metrics_list, names, out_summary)
     plot_extra_metrics(metrics_list, names, out_extra)
     plot_timeseries(times_list, series_list, names, out_ts)

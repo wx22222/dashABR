@@ -97,7 +97,7 @@ def zscore_fit(arr):
 def zscore_apply(arr, m, s):
     return (arr - m) / s
 
-def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batch_size, save_path, cfg_path, onnx_path=None, dropout=0.2, huber_beta=1.0):
+def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batch_size, save_path, cfg_path, onnx_path=None, dropout=0.2, huber_beta=1.0, patience=5):
     import torch
     import torch.nn as nn
     import torch.optim as optim
@@ -110,28 +110,46 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
     class M(nn.Module):
         def __init__(self):
             super().__init__()
-            self.lstm = nn.LSTM(input_size=1, hidden_size=hidden, num_layers=layers, batch_first=True, dropout=float(dropout))
+            # input_size=2: channel 0 is absolute bandwidth, channel 1 is difference
+            self.lstm = nn.LSTM(input_size=2, hidden_size=hidden, num_layers=layers, batch_first=True, dropout=float(dropout))
+            # Multi-head attention layer: embed_dim must match hidden, num_heads can be tuned (e.g., 4)
+            self.attention = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True, dropout=float(dropout))
             self.dropout = nn.Dropout(p=float(dropout))
             self.fc = nn.Linear(hidden, 1)
         def forward(self, x):
             x = x.unsqueeze(-1)
-            o, _ = self.lstm(x)
+            # Compute difference between adjacent time steps (1st derivative)
+            diff = x[:, 1:, :] - x[:, :-1, :]
+            # Pad the first time step with 0 to maintain seq_len
+            diff = torch.cat([torch.zeros_like(x[:, :1, :]), diff], dim=1)
+            # Concatenate features: (batch, seq_len, 2)
+            x_in = torch.cat([x, diff], dim=-1)
+            
+            o, _ = self.lstm(x_in)
+            # Self-attention over the LSTM outputs
+            attn_out, _ = self.attention(o, o, o)
+            # Add residual connection
+            o = o + attn_out
+            # Use the output from the last time step
             h = o[:, -1, :]
             h = self.dropout(h)
             y = self.fc(h)
             return y.squeeze(-1)
     model = M()
     opt = optim.Adam(model.parameters(), lr=lr)
-    # try:
-    #     loss_fn = nn.SmoothL1Loss(beta=float(huber_beta))
-    # except TypeError:
-    #     loss_fn = nn.SmoothL1Loss()
-    loss_fn = nn.L1Loss()
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.5, patience=3, verbose=True)
+    
+    try:
+        loss_fn = nn.SmoothL1Loss(beta=float(huber_beta))
+    except TypeError:
+        loss_fn = nn.SmoothL1Loss()
+    # loss_fn = nn.L1Loss()
     tr_ds = torch.utils.data.TensorDataset(torch.from_numpy(Xtr_n), torch.from_numpy(ytr_n))
     val_ds = torch.utils.data.TensorDataset(torch.from_numpy(Xval_n), torch.from_numpy(yval_n))
     tr_loader = torch.utils.data.DataLoader(tr_ds, batch_size=batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     best = None
+    epochs_no_improve = 0
     for ep in range(epochs):
         model.train()
         t0 = time.time()
@@ -157,8 +175,11 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
                 vc += xb.size(0)
         vl = vl / max(1, vc)
         print(f"epoch={ep+1} train_loss={tl:.6f} val_loss={vl:.6f} time_s={time.time()-t0:.3f}")
+        scheduler.step(vl)
+        
         if best is None or vl < best:
             best = vl
+            epochs_no_improve = 0
             try:
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
             except Exception:
@@ -194,6 +215,11 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
                     torch.onnx.export(model, d, onnx_path, input_names=["hist"], output_names=["pred"], opset_version=17)
                 except Exception as e:
                     print(f"onnx_export_failed {e}")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered at epoch {ep+1}")
+                break
 
 def main():
     ap = argparse.ArgumentParser()
@@ -214,6 +240,7 @@ def main():
     ap.add_argument("--onnx_path", default=os.path.join(os.getcwd(), "assets", "models", "oboe_lstm.onnx"))
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--huber_beta", type=float, default=1.0)
+    ap.add_argument("--patience", type=int, default=15, help="Early stopping patience")
     ap.add_argument("--to_kbps", action="store_true")
     args = ap.parse_args()
     X, y = collect_dataset(args.oboe_dir, args.dt, args.hist_len, args.pred_horizon, args.max_traces, to_kbps=args.to_kbps)
@@ -230,7 +257,7 @@ def main():
     except Exception as e:
         print(f"torch_missing {e}")
         return
-    train_torch(Xtr, ytr, Xval, yval, args.hist_len, args.hidden, args.layers, args.lr, args.epochs, args.batch_size, args.save_path, args.cfg_path, args.onnx_path, dropout=args.dropout, huber_beta=args.huber_beta)
+    train_torch(Xtr, ytr, Xval, yval, args.hist_len, args.hidden, args.layers, args.lr, args.epochs, args.batch_size, args.save_path, args.cfg_path, args.onnx_path, dropout=args.dropout, huber_beta=args.huber_beta, patience=args.patience)
 
 if __name__ == "__main__":
     main()

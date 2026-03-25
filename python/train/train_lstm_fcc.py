@@ -97,7 +97,7 @@ def zscore_fit(arr):
 def zscore_apply(arr, m, s):
     return (arr - m) / s
 
-def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batch_size, save_path, cfg_path, onnx_path=None, dropout=0.2, huber_beta=1.0):
+def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batch_size, save_path, cfg_path, onnx_path=None, dropout=0.2, huber_beta=1.0, patience=5):
     import torch
     import torch.nn as nn
     import torch.optim as optim
@@ -111,12 +111,17 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
         def __init__(self):
             super().__init__()
             self.lstm = nn.LSTM(input_size=1, hidden_size=hidden, num_layers=layers, batch_first=True, dropout=float(dropout))
+            # Multi-head attention layer: embed_dim must match hidden, num_heads can be tuned (e.g., 4)
+            self.attention = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True, dropout=float(dropout))
             self.dropout = nn.Dropout(p=float(dropout))
             self.fc = nn.Linear(hidden, 1)
         def forward(self, x):
             x = x.unsqueeze(-1)
             o, _ = self.lstm(x)
-            h = o[:, -1, :]
+            # Self-attention over the LSTM outputs
+            attn_out, _ = self.attention(o, o, o)
+            # Use the output from the last time step
+            h = attn_out[:, -1, :]
             h = self.dropout(h)
             y = self.fc(h)
             return y.squeeze(-1)
@@ -132,6 +137,7 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
     tr_loader = torch.utils.data.DataLoader(tr_ds, batch_size=batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     best = None
+    epochs_no_improve = 0
     for ep in range(epochs):
         model.train()
         t0 = time.time()
@@ -159,6 +165,7 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
         print(f"epoch={ep+1} train_loss={tl:.6f} val_loss={vl:.6f} time_s={time.time()-t0:.3f}")
         if best is None or vl < best:
             best = vl
+            epochs_no_improve = 0
             try:
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
             except Exception:
@@ -194,6 +201,11 @@ def train_torch(Xtr, ytr, Xval, yval, hist_len, hidden, layers, lr, epochs, batc
                     torch.onnx.export(model, d, onnx_path, input_names=["hist"], output_names=["pred"], opset_version=17)
                 except Exception as e:
                     print(f"onnx_export_failed {e}")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered at epoch {ep+1}")
+                break
 
 def main():
     ap = argparse.ArgumentParser()
@@ -215,6 +227,7 @@ def main():
     ap.add_argument("--to_kbps", action="store_true")
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--huber_beta", type=float, default=1.0)
+    ap.add_argument("--patience", type=int, default=10, help="Early stopping patience")
     args = ap.parse_args()
     X, y = collect_dataset(args.fcc_dir, args.dt, args.hist_len, args.pred_horizon, args.max_traces, to_kbps=args.to_kbps)
     if X is None or y is None:
@@ -230,7 +243,7 @@ def main():
     except Exception as e:
         print(f"torch_missing {e}")
         return
-    train_torch(Xtr, ytr, Xval, yval, args.hist_len, args.hidden, args.layers, args.lr, args.epochs, args.batch_size, args.save_path, args.cfg_path, args.onnx_path, dropout=args.dropout, huber_beta=args.huber_beta)
+    train_torch(Xtr, ytr, Xval, yval, args.hist_len, args.hidden, args.layers, args.lr, args.epochs, args.batch_size, args.save_path, args.cfg_path, args.onnx_path, dropout=args.dropout, huber_beta=args.huber_beta, patience=args.patience)
 
 if __name__ == "__main__":
     main()

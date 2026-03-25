@@ -1,0 +1,538 @@
+HYBRID CONTROL-BASED ABR: TOW ARDS LOW-DELAY LIVE STREAMING
+Bo Wang1,2, Fengyuan Ren1,2, Chao Zhou3
+1Beijing National Research Center for Information Science and Technology, Beijing, China
+2Department of Computer Science and Technology, Tsinghua University, Beijing, China
+3Beijing Kuaishou Technology Co., Ltd, Beijing, China
+{wangbo, renfy }@csnet1.cs.tsinghua.edu.cn, zhouchaoyf@gmail.com
+ABSTRACT
+Video content providers are increasingly interested in inter-
+active live streaming since user engagement increases their
+revenues. To provide high quality of experience (QoE), it is
+critical to design a low delay adaptive bitrate (ABR) algo-
+rithm, but which is lacked in existing studies. The low delay
+constraint poses much more challenges to achieve high bi-
+trate and low rebuffering. For example, low delay requires the
+player to maintain a small playback buffer, which, however,
+increases the risk of rebuffering. This work designs a low
+delay ABR algorithm called HCA which provides good QoE
+by controlling the buffer occupancy at a low but non-empty
+level. To achieve accurate control, HCA uses the hybrid of
+feedback and feedforward control to regulate the buffer dy-
+namic (buffer occupancy and its variation) based on predic-
+tions of future network condition (throughput and its varia-
+tion). Trace-driven experiments show that HCA achieves zero
+rebuffering for 98% of all traces while ensuring high bitrate.
+Index T erms —HTTP adaptive bitrate streaming, low de-
+lay, interactive live streaming
+1. INTRODUCTION
+Since user engagement increases revenue, video content
+providers like Y ouTube and Twitter’s Periscope are increas-
+ingly interested in interactive live streaming where viewers
+can interact with the broadcaster when watching video [1].
+To maintain interactivity, live streaming requires the time be-
+tween the event is recorded and is viewed (i.e., the delay) is
+low. Content providers strive to provide good quality of expe-
+rience (QoE) under low delay constraint to attract more users.
+HTTP Adaptive Bitrate (HAS) streaming (standardized
+as DASH [2]) is the primary tool to optimize QoE in vary-
+ing network conditions. It splits a video into chunks with
+each encoded into several bitrates, and uses client-side adap-
+tive bitrate (ABR) algorithm to dynamically adjust bitrate in
+the unit of chunk. Commercial players such as Netﬂix and
+Y ouTube use HAS to improve QoE [3]. To better support in-
+teractive streaming, HAS recently added low delay option to
+allow chunk to be played before completely downloaded.Despite the broad interest in the design of ABR algorithm,
+existing works mainly focus on V oD streaming which has no
+constraint of low delay. What is critically lacking is a low de-
+lay algorithm for interactive live streaming. However, select-
+ing the right bitrate with low delay constraint is much more
+challenging due to (1) the conﬂicts between low delay and lit-
+tle rebuffering (low delay requires small playback buffer oc-
+cupancy while continuous playback need large buffering to
+absorb the impact of throughput ﬂuctuations); (2) the difﬁ-
+culty of delivering high-quality video while without inducing
+rebuffering and increasing the delay (videos of higher bitrate
+requires longer time to download, which might drain out the
+buffer thus inducing rebuffering and increasing the delay).
+Contributions. To provide good experience of both view-
+ing and interactivity, this work designs a low delay ABR al-
+gorithm (called as HCA) based on Hybrid Control, which em-
+ploys a small buffer capacity (i.e., maximum buffer size) and
+selects the highest safe bitrate while preventing the buffer oc-
+cupancy from empty within that constraint. Since the buffer
+dynamic reﬂects the mismatch between bitrate and through-
+put, HCA adjusts bitrate by controlling the buffer occupancy
+at a low but non-empty level, thus achieving bitrate maxi-
+mization and rebuffering minimization at the same time.
+To accurately control the buffer occupancy in unstable
+networks, HCA borrows from the design of V oD ABRs. Ex-
+isting adaptations are mainly based on feedforward which
+maximizes QoE using throughput predictions [4, 5], or based
+on feedback which relies on buffer occupancy without predic-
+tion [6, 7]. Feedforward can adapt to future network changes
+but the performance is sensitive to prediction error, whereas
+the adaptation of feedback is robust against throughput ﬂuctu-
+ations but is reactive. Inspired by this, HCA achieves accurate
+control by using a hybrid control which makes rapid reaction
+to throughput changes by feedforward control and resists the
+impact of prediction error by feedback control.
+In detail, HCA designs a reference buffer dynamic tra-
+jectory with the points on which evolving towards the target
+level. The buffer occupancy is controlled to follow the trajec-
+tory to move to the target. By using hybrid control, HCA
+ﬁrst computes the bitrate that needed to reach the desired
+7542019 IEEE International Conference on Multimedia and Expo (ICME)
+978-1-5386-9552-4/19/$31.00 ©2019 IEEE
+DOI 10.1109/ICME.2019.00135
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 
+
+
+
+	 
+
+ 
+
+	 
+Fig. 1 . Motivation
+trajectory based on predictions of future network condition
+(throughput and its variation), and then correct the bitrate with
+considering the current buffer state so that the actual buffer
+output can be bounded within a limited range of the target.
+HCA is evaluated on a reference video player Dash.js with
+given a small buffer capacity using realistic throughput mea-
+surements. Experiment results show that HCA achieves 98%
+zero rebuffering of all tested networks and the selected bi-
+trates match the average level of existing V oD ABRs.
+In the rest of paper, we introduce the background and mo-
+tivation in Section 2. Section 3 formulates the adaptation
+problem. Section 4 develops the HCA algorithm. Evaluation
+experiments are presented in Section 5. Section 6 introduces
+the related work. The paper is concluded in Section 7.
+2. BACKGROUND AND MOTIV ATION
+Overview of HAS: HAS is currently the most popular
+technology for streaming V oD and live videos. It can not only
+stream cost-effectively to a large audience by using CDNs
+and HTTP servers, but also ensure good QoE by adapting bi-
+trate to varying bandwidth. Live streaming requires low de-
+lay but V oD streaming has no requirement. To better support
+live streaming, HAS provides low delay option by leverag-
+ing HTTP chunked transfer, which delivers chunk in unit of
+smaller segment so that the chunk can be played before it is
+completely downloaded [1]. The core of HAS is ABR algo-
+rithm, which heavily inﬂuences the achieved QoE. ABR se-
+lects bitrate based on throughput predictions and buffer occu-
+pancy with the goal of optimizing QoE, including maximizing
+bitrate and minimizing rebuffering [6, 7].
+State-of-the-art ABR algorithms: Existing ABRs are
+mainly designed for V oD streaming, which can be roughly di-
+vided into feedback-based and feedforward-based algorithms.
+As shown in Figure 1(a), feedback-based ABRs [6, 7] ad-
+just bitrate to reduce the offset between the current buffer
+level and the target. By continuously taking corrective ac-
+tions, feedback is robust against throughput ﬂuctuations.
+However, it is also reactive. Without making prediction, the
+corrective action is taken only after there is a buffer offset.
+Feedforward-based approach [4, 8, 5] predicts future through-
+puts and selects the bitrate that matches the throughput or out-
+puts the maximum QoE. The idea is illustrated in Figure 1(b).
+By adapting to future network condition, feedforward-basedXk=
+Qk-QrYk=ΔQk
+SkSk+1
+Buﬀer 
+DynamicDesired 
+Trajectory 
+S=0
+#
+"
+!
+	" 
+
+
+ +
+ 
+
+ 
+Fig. 2 . Basic Idea
+ABRs are able to make rapid reaction to network changes.
+However, the performance is sensitive to prediction error.
+Both of the two methodologies might induce signiﬁcant
+buffer occupancy variation in rapidly changing networks.
+However, they can provide good QoE for V oD streamings
+because the impact of ﬂuctuations can be absorbed by large
+buffer occupancy so as to not lead to rebuffering.
+Challenges of designing a low delay ABR: Due to the
+ﬂuctuating network throughput and the conﬂicting QoE opti-
+mization goals, picking a correct bitrate is hard for both V oD
+streaming and live streaming. However, the stringent low de-
+lay requirement poses more challenges for live streaming to
+provide good QoE. The new challenges are (1) low delay re-
+quires small playback buffer occupancy, but which impairs
+the resistance to throughput ﬂuctuations and increases the risk
+of rebuffering. (2) increasing video quality will increase the
+risk of rebuffering and long delay, because minimizing re-
+buffering and delay would constantly select the lowest bitrate.
+Motivation and basic idea: To achieve both good QoE
+and low delay, ABR algorithm should use a small buffer ca-
+pacity and under this limitation to select the highest safe bi-
+trate without exhausting the buffer. Since the buffer occu-
+pancy increases at the speed of network throughput and de-
+creases at the speed of video bitrate, the selected bitrate fully
+utilizes the network capacity if the buffer occupancy is con-
+stant. Considering that the buffer dynamic not only reﬂects
+the bandwidth utilization but also relates to rebuffering, the
+QoE optimization of low delay streaming can be solved by
+controlling the buffer occupancy at a low but non-empty level.
+The key to realizing this potentiality is accurately controlling
+the buffer occupancy. Motivated by the analysis of existing
+V oD ABRs, we propose to use the hybrid of feedback con-
+trol and feedforward control to achieve accurate control. The
+feedforward controller is used to eliminate the effect of large
+throughput variation by taking a corrective action ahead of
+time, and the feedback controller focuses on dealing with the
+prediction error. By using hybrid control, we can decouple the
+response to throughput variations and the resistance to distur-
+bances, achieving both robustness and quick response.
+3. PROBLEM FORMULATION
+Assume there are Nversions for video content with dif-
+ferent bitrates. All versions of video are partitioned into K
+755
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 
+
+
+! $#!!#&#
+
+! $#!(
+((	%#
+' 
+$$
+' #
+(
+##!# (
+#$! 
+##!#
++
+#!%"%$
+#$! ' 
+!+
+Fig. 3 . Overview of HCA
+chunks, each of which has the same playback time of V. Let
+Ck(Rk)be the size of chunk kencoded at bitrate Rk.
+LetQkdenote the buffer occupancy at the start of down-
+loading chunk kandTkbe the average download speed. Each
+second time, a second video is dequeued from the buffer.
+When a chunk downloaded, the buffer is added with Vsec-
+onds. Therefore, the buffer evolves as Qk+1=max{Qk−
+Ck(Rk)/Tk,0}+V, whereQk∈[V,Q max]. LetXkde-
+note the offset of the buffer occupancy to the target level, i.e.,
+Xk=Qk−Qr, andYkdenote the buffer occupancy varia-
+tion in a chunk download interval, i.e., Yk=Qk−Qk−1. The
+state-space model uses (Xk,Yk)to describe the system state.
+Thus, the ideal state is (Xk,Yk)=( 0,0), i.e., the origin of
+the state space. Figure 2 illustrates it.
+For convenience, this paper uses RkVto substitute
+Ck(Rk), but which should use the actual chunk size in prac-
+tice. With assuming Tk=Tk−1andˆTkbeing the estimation,
+the following equation can be obtained from the buffer model.
+ΔQk+1=ΔQk−V
+ˆTkΔRk+ξk (1)
+whereξkis the uncertainty term, representing the impact of
+throughput variation and estimation error on buffer dynamic.
+With Eq.(1), the system dynamic can be formulated as
+Xk+1=Xk+Yk+1
+Yk+1=Yk−V
+ˆTkΔRk+ξk(2)
+With throughput estimation ˆTkand the uncertainty range
+[ξmin,ξmax]as input, this formulation outputs the bitrate
+changeΔRkthat is able to control the buffer occupancy to
+reach and stay at the target level Qr.
+4. HYBRID CONTROL-BASED ABR
+With the formulation in Section 3, bitrate is selected by
+controlling (Xk,Yk)at(0,0). To achieve accurate control, we
+regulates the evolution of (Xk,Yk)not just the instantaneous
+state of(Xk,Yk). HCA designs a trajectory that evolves to-
+wards the origin and controls the system state to move along
+it. Figure 3 illustrates the framework of HCA. After design-
+ing a desired trajectory Sk=f(Xk,Yk), there are four steps
+to determine the bitrate Rkfor chunk k:
+(1) Predict Throughput: Predict the throughput ˆTkand the
+range of error ξk∈[ˆξmin,ˆξmax].(2) Generate feedforward signal: Given current state
+(Xk,Yk), compute the signal ΔRffneeded to output the de-
+sired behavior Sk+1=f(Xk+1,Yk+1)=0 based on the
+system model in Eq.(2) and the throughput prediction ˆTk.
+(3) Generate feedback signal: ΔRfdis set as a function
+of current state (Xk,Yk)to decrease the current distance to
+the desired trajectory in the condition of ξk∈[ˆξmin,ˆξmax].
+(4) Output bitrate decision: With the two control signals
+combined, the requested video bitrate Rkis the highest avail-
+able bitrate lower than Rk−1+ΔRff+ΔRfd.
+4.1. Throughput Prediction
+RBC requires the predictor to make real-time online pre-
+diction of throughput and estimation of prediction error vari-
+ance. Since this paper is not to design a new predictor, we
+rely on existing solutions. A suitable and robust method is
+the Kalman Filter predictor proposed in [9].
+Letθk=−V/T kdenote the variable to be estimated. As
+the network condition is fairly stable within seconds, the evo-
+lution ofθcan be modeled as θk+1=θk+ωkwithωkrepre-
+senting the noise. We use ΔYk=Yk−Yk−1as the measure-
+ment ofθk. Based on the relation between YkandTkshown
+in Eq.(2), the model of Kalman Filter is
+θk+1=θk+ωk
+ΔYk+1=ΔRkθk+ξk(3)
+Previous studies [8, 10] show that throughput evolution
+is largely Gaussian. Therefore, ωkandξkare both mod-
+eled as Gaussian process with zero mean. The variances are
+Ω=E[ω2(k)]andZk=E[ξ2(k)]. The estimation of Zis
+recursively updated by an exponential moving average ﬁlter,
+Zk=μZk−1+(1−μ)[ΔYk−ΔRk−1θk−1]2(4)
+whereμis the weight factor. The estimation of ˆθkis given by
+ˆθk=ˆθk−1+Gk(ΔYk−ΔRk−1ˆθk−1)
+Gk=(Pk−1+Ω)ΔRk
+ΔR2
+k(Pk−1+Ω)+Zk
+Pk=( 1−GkΔRk)(Pk−1+Ω)(5)
+Finally, the throughput prediction is ˆTk=−V/ˆθkwithˆθk
+obtained through Eq.(5). The range of error ξkis estimated by
+[−Zk,Zk]whereZkis estimated according to Eq.(4).
+4.2. Design of Bitrate Controller
+The ﬁrst step is designing the reference evolution trajec-
+tory. Let Sk=Xk+λYkwithλ<1. Then, the desired
+trajectory is deﬁned as Sk=0. A negative Skmeans that the
+current state (Xk,Yk)is below the trajectory while Sk>0
+suggests that (Xk,Yk)lies above the line. It proves that all
+points at the reference trajectory converge to the origin at the
+end of this section. Therefore, as long as the bitrate controller
+756
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 
+constrains the system state to stay at the desired trajectory,
+i.e., adjusting bitrate to achieve Sk+1=0 , the buffer state
+will follow the line sliding to the origin. This goal is achieved
+by combining feedforward and feedback signals.
+According to Eq.(2), the evolution of Sk+1is
+Sk+1=λSk+Yk−(λ+1)V
+ˆTΔRk+(λ+1)ξk (6)
+By setting Sk+1=0 , we can obtain the feedforward sig-
+nal, i.e., ΔRff=[ (λSk+Yk)ˆT]/[(λ+1 )V]. The feed-
+back controller takes a proportional form ΔRfd=αX k.I f
+XkSk>0,α=α1.I fXkSk<0,α=α2. By combining
+ΔRffandΔRfd, the bitrate decision ΔRkis
+ΔRk=(λSk+Yk)ˆT
+(λ+1)V+αX k (7)
+The parameter αshould be set to ensure that the system
+state always converges to the reference trajectory. We de-
+termine the value of α1andα2by solving |Sk+1|<|Sk|
+, namely the next distance to the reference line is smaller
+than the present distance. The idea is shown in Figure 2. To
+solve it, we substitute Eq.(7) into Eq.(6) and obtain Sk+1=
+−[(λ+1 )V/ˆT]αX k+(λ+1 )ξk. With it, the range of α1
+andα2that satisﬁes |Sk+1|<|Sk|can be obtained. Con-
+sideringξkis an uncertain variable within a bounded range,
+the range of values for αshould be further narrowed down so
+that|Sk+1|<|Sk|holds for any possible value of ξkin the
+estimated range [ˆξmin,ˆξmax]. It follows that
+ˆTˆξmax
+VX k−ˆTSk
+V(λ+1)Xk<α 1<ˆTˆξmin
+VX k+ˆTSk
+V(λ+1)Xk
+ˆTˆξmax
+VX k+ˆTSk
+V(λ+1)Xk<α 2<ˆTˆξmin
+VX k−ˆTSk
+V(λ+1)Xk(8)
+Proof of convergence: Let’s discuss the evolution of
+Xk+1when current state (Xk+1,Yk+1)is on the reference
+trajectory. Given Sk=0 , it satisﬁes Yk=−λXk. Based
+on Eq.(2) and the result of ΔRff,w eh a v e Xk+1=( 1−
+λ+λXk/(λ+1) . It is obvious that |Xk+1|<|Xk|because
+1−λ+λ/(λ+1)<1. With the Lyapunov function deﬁned
+asLk=X2
+k/2, it obtains that ΔLk+1=1
+2X2
+k+1−1
+2X2
+k<
+0,(Xk/negationslash=0 ) , which proves that system states located on
+S=0 asymptotic converges to X=0 . Namely, the buffer
+occupancy converges to the target level.
+5. EV ALUATION
+To evaluate HCA, we carry out experiments on a reference
+DASH player using realistic network traces.
+5.1. Experimental Setup and Adaptation Methods
+Throughput traces: We use an HSDPA mobile dataset
+[11] and a proprietary dataset from KwaiShou [12], which isa leading commercial video provider in China. The HSDPA
+dataset comprises measurements of video streaming through-
+put of a moving device in Telenor’s 3G/HSDPA mobile wire-
+less network in Norway. For evaluation experiments, we gen-
+erate 300 traces with 300 continuous 1s throughput measure-
+ments from randomly selected traces for each dataset.
+Implementation and setup: We use Nginx as the basis
+of server deployment and Dash.js as the video player [13]. To
+implement algorithms, the original Dash.js is modiﬁed using
+the methods in [4]. Our evaluation uses video “Envivio” from
+[14] which consists of 100 2s chunks with each encoded in
+{0.35, 0.6, 1, 2, 3 }Mbps. The buffer capacity is Qmax=5s.
+ABR algorithms: HCA selects bitrate by Eq.(7) with
+Qr=2s,λ=0.75andαbounded by Eq.(8). Throughput
+predictor adopts the setting of Ω=1 05andμ=0.7.F o r
+comparison, several typical V oD algorithms are evaluated:
+Feedback-based approaches:
+(1) BBA [6]: selects bitrate by a function of buffer occupancy
+with a reservoir of 2s and a cushion of 3s. The goal is to
+control the buffer occupancy between 2s and 5s.
+(2) BOLA [7]: is designed based on Lyapunov optimization,
+the bitrate decision of which is essentially a function of cur-
+rent buffer occupancy.
+Feedforward-based approaches:
+(3) MPC [4]: maximizes the designed QoE utility over 5
+chunks with throughput predictions.
+(4) RobustMPC (denoted as RMPC) [4]: uses the same ap-
+proach as MPC but mitigates the effect of prediction error by
+normalizing throughput predictions with the maximum pre-
+diction error observed in the past 5 chunks.
+(5) RB: picks the highest bitrate less than the estimated
+throughput of the next chunk.
+QoE metrics: (a) average bitrate; (b) total rebuffer-
+ing time; (c) QoE utility, computed by QoE=Rate−
+γ×RebufTime . Since rebuffering not only degrades QoE
+but also increases the delay, so we adopt the “Avoid Rebuffer-
+ing” setting, i.e., γ=6, as recommended in [4].
+5.2. Results
+Statistical Performance of QoE and Buffer Dynamic:
+Figure 4 presents the CDF of per-session average bitrate, total
+rebuffering time. It observes that HCA exhibits great advan-
+tages in reducing rebuffering, with zero rebuffering session
+ratio being 96% in HSDPA and 100% in KwaiShou network.
+The video quality also rivals to existing algorithms. The most
+competitive algorithm is BOLA and RMPC. BOLA achieves
+good performance in reducing rebuffering but the bitrate se-
+lection is too conservative. RMPC provides a slightly higher
+video bitrate but the rebuffering is much severer than HCA.
+We further zoom in on the buffer dynamics to better un-
+derstand the performance differences. Since small buffer ca-
+pacity limits the buffer dynamic which thus can not reﬂect
+the control performance of algorithms, we use a large buffer
+757
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 
+(a) KwaiShou (b) HSDPA
+Fig. 4 . Statistical performance of QoE metrics
+(a) KwaiShou (b) HSDPA
+Fig. 5 . Statistical performance of buffer occupancy
+Fig. 6 . Detailed buffer dynamics of ABRs in a session
+capacity of 30s to re-run ABR algorithms. Figure 5 presents
+the statistical results of buffer dynamic, and Figure 6 uses one
+session to illustrate the detail. As shown, HCA is able to ac-
+curately control the buffer occupancy at a low but non-empty
+level. It controls the buffer occupancy at around 4s and leads
+to the minimum standard deviation with about 1s on average.
+Although the buffer occupancies of RMPC and MPC are also
+small, their variation is not trivial, thus inducing frequent re-
+buffering. Since BOLA and BBA both fully rely on buffer
+occupancy to adapt bitrate, they all keep large buffering to ab-
+sorb the impact of throughput ﬂuctuations. When the buffer
+capacity is limited to a small size, feedback controllers can
+result in either long rebuffering or conservative bitrate.
+Sensitivity to video properties: We further evaluate the
+sensitivity of HCA to available bitrate set and video type. Due
+to the limited space, Figure 7 only presents the QoE util-
+ity of several competitive algorithms, i.e., BBA, BOLA and
+RMPC. Results are normalized against the performance of(a) Bitrate Levels (b) Videos
+Fig. 7 . Sensitivity of HCA to video characteristics
+HCA. First, ABR algorithms are performed on three different
+bitrate sets, including {0.5, 1.5, 3 }Mbps with 3 levels, {0.3,
+0.75, 1.2, 1.85, 2.85, 4.3 }Mbps with 6 levels and {0.35, 0.6,
+1, 1.5, 2, 2.5, 3, 3.5 }Mbps with 8 levels. Figure 7(a) shows
+that HCA provides the best QoE. Since video property inﬂu-
+ences the adaptation process, we also test the performance of
+HCA on three new videos from dataset [15]. Figure 7(b) re-
+veals that HCA keeps its advantage for all tested videos.
+Impact of algorithm parameters: Figure 8 analyzes the
+performance of HCA with regard to key parameters – weight
+factorλand target buffer occupancy Qr. It shows that QoE
+reaches the maximum when λ=0.75andQr=2s.
+6. RELATED WORK
+There have been several ABR research for low delay
+HTTP streaming. Le et al. [16] propose an algorithm for live
+streaming by optimizing JND (Just Noticeable Difference).
+758
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 
+(a) Target Buffer (b) Weight Factor
+Fig. 8 . Impact of algorithm parameters on HCA
+However, the algorithm outputs a non-trivial buffer occu-
+pancy which does not satisfy low-delay requirement. [17] de-
+signs LOLYPOP to improve the throughput prediction, which
+is still sensitive to prediction error.
+7. CONCLUSION
+In this work, we present a low-delay bitrate adaptation so-
+lution HCA, which optimizes QoE with the limitation of small
+buffer by controlling the buffer occupancy at a small but non-
+empty level. To accurately control the buffer occupancy in
+unstable network, HCA uses the hybrid of feedback control
+and feedforward control, achieving both robustness and rapid
+reaction. Over a large throughput dataset, evaluation exper-
+iments demonstrate that HCA achieves zero rebuffering for
+98% of all traces while providing high bitrate.
+8. ACKNOWLEDGMENTS
+The authors gratefully acknowledge the anonymous re-
+viewers for their constructive comments. This work is sup-
+ported in part by the National Key Research and Development
+Program of China (No.2018YFB1700103), and by National
+Natural Science Foundation of China (NSFC) under Grant
+61872208.
+9. REFERENCES
+[1] Low Latency HLS , https://www.theoplayer.com/blog/low-
+latency-hls-lhls.
+[2] Iraj Sodagar, “The mpeg-dash standard for multimedia
+streaming over the internet,” IEEE MultiMedia , 2011.
+[3] Why YouTube and Netﬂix use MPEG-DASH in
+HTML5 , https://bitmovin.com/status-mpeg-dash-today-
+youtube-netﬂix-use-html5-beyond/.
+[4] Xiaoqi Yin, Abhishek Jindal, Vyas Sekar, and Bruno
+Sinopoli, “A control-theoretic approach for dynamic
+adaptive video streaming over http,” in Proc. ACM SIG-
+COMM , 2015.[5] Junchen Jiang, Vyas Sekar, and Hui Zhang, “Improving
+fairness, efﬁciency, and stability in http-based adaptive
+video streaming with festive,” in Proc. ACM CoNEXT ,
+2012.
+[6] Te-Y uan Huang, Ramesh Johari, Nick McKeown,
+Matthew Trunnell, and Mark Watson, “A buffer-based
+approach to rate adaptation: Evidence from a large
+video streaming service,” in Proc. ACM SIGCOMM ,
+2014.
+[7] Kevin Spiteri, Rahul Urgaonkar, and Ramesh K Sitara-
+man, “Bola: near-optimal bitrate adaptation for online
+videos,” in Proc. IEEE INFOCOM , 2016.
+[8] Yi Sun, Xiaoqi Yin, Junchen Jiang, Vyas Sekar, Fuyuan
+Lin, Nanshu Wang, Tao Liu, and Bruno Sinopoli,
+“Cs2p: Improving video bitrate selection and adaptation
+with data-driven throughput prediction,” in Proc. ACM
+SIGCOMM , 2016.
+[9] Bo Wang and Fengyuan Ren, “Towards forward-looking
+online bitrate adaptation for dash,” in Proceedings of the
+2017 ACM on Multimedia Conference . ACM, 2017.
+[10] Zahaib Akhtar, Y unSeong Nam, Ramesh Govindan,
+Sanjay Rao, Jessica Chen, Ethan Katz-Bassett, Bruno
+Ribeiro, Jibin Zhan, and Hui Zhang, “Oboe: auto-tuning
+video abr algorithms to network conditions,” in Proc.
+ACM SIGCOMM , 2018.
+[11] HSDPA dataset , http://home.iﬁ.uio.no/paalh/dataset/hsdpa-
+tcp-logs.
+[12] KwaiShou , https://www.kuaishou.com/.
+[13] Dash-Industry-F orum, dash.js, ,
+https://github.com/Dash-Industry-Forum/dash.js/wiki.
+[14] DASH JavaScript reference client landing page 1.4.0. ,
+http://dashif.org/reference/players/javascript/1.4.0/samples/
+dash-if-reference-player/index.html.
+[15] Stefan Lederer, Christopher M ¨uller, and Christian Tim-
+merer, “Dynamic adaptive streaming over http dataset,”
+inProc. ACM MMSys , 2012.
+[16] H. T. Le, H. N. Nguyen, N. Pham Ngoc, A. T. Pham,
+H. Le Minh, and T. C. Thang, “Quality-driven bitrate
+adaptation method for http live-streaming,” in IEEE
+ICCW , 2015.
+[17] Konstantin Miller, Abdel-Karim Al-Tamimi, and Adam
+Wolisz, “Qoe-based low-delay live streaming using
+throughput predictions,” ACM Trans. Multimedia Com-
+put. Commun. Appl. , vol. 13, no. 1, pp. 4:1–4:24, 2016.
+759
+Authorized licensed use limited to: Lanzhou University. Downloaded on March 17,2026 at 04:38:35 UTC from IEEE Xplore.  Restrictions apply. 

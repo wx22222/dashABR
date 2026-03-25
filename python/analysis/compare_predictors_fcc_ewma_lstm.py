@@ -7,6 +7,11 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
+LSTM_COLOR = "#898bfe"
+EWMA_COLOR = "#fd9d9f"
+ARIMA_COLOR = "#525353"
+TRUTH_COLOR = "#000000"
+
 def load_trace(path, to_kbps=False):
     out = []
     with open(path, "r", encoding="utf-8") as f:

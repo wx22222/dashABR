@@ -7,9 +7,10 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-LSTM_COLOR = "#1f77b4"
-EWMA_COLOR = "#ff7f0e"
-ARIMA_COLOR = "#2ca02c"
+LSTM_COLOR = "#23BAC5"
+EWMA_COLOR = "#EECA40"
+ARIMA_COLOR = "#FD763F"
+HCA_COLOR = "#AA66EB"
 TRUTH_COLOR = "#000000"
 
 def load_trace(path, to_kbps=False):
@@ -75,6 +76,102 @@ def ewma_predict_windows(X, alpha):
     per_step = (t1 - t0) / float(X.shape[0]) if X.shape[0] > 0 else float('nan')
     return np.array(preds, dtype=np.float32), per_step
 
+def kf_hca_predict_windows(X, omega=1e-5, mu=0.7, V=1.0):
+    """
+    Implementation of the Kalman Filter throughput predictor from:
+    'Hybrid Control-Based ABR Towards Low-Delay Live Streaming'
+    """
+    t0 = time.perf_counter()
+    preds = []
+    for i in range(X.shape[0]):
+        xh = X[i]
+        if xh[0] <= 0:
+            theta_hat = -1.0
+        else:
+            theta_hat = -V / xh[0]
+        P = 1.0
+        Z = 1.0
+        for k in range(1, len(xh)):
+            Tk = float(xh[k])
+            if Tk <= 0:
+                continue
+            # Dummy U_k = 1.0 to apply to raw throughput trace
+            M_k = -V / Tk
+            U_k = 1.0
+            
+            # Eq 4: Z_k = mu * Z_{k-1} + (1-mu) * (M_k - U_k * theta_{k-1})^2
+            Z = mu * Z + (1.0 - mu) * ((M_k - U_k * theta_hat) ** 2)
+            
+            # Eq 5: G_k, theta_k, P_k
+            G = (P + omega) * U_k / ((U_k ** 2) * (P + omega) + Z)
+            theta_hat = theta_hat + G * (M_k - U_k * theta_hat)
+            P = (1.0 - G * U_k) * (P + omega)
+            
+        if theta_hat < -1e-9:
+            T_pred = -V / theta_hat
+        else:
+            T_pred = xh[-1]
+            
+        if not math.isfinite(T_pred) or T_pred <= 0:
+            T_pred = xh[-1]
+            
+        preds.append(float(T_pred))
+        
+    t1 = time.perf_counter()
+    per_step = (t1 - t0) / float(X.shape[0]) if X.shape[0] > 0 else float('nan')
+    return np.array(preds, dtype=np.float32), per_step
+
+def rls_predict_windows(X, filter_order=3, forgetting_factor=0.98, delta=1.0):
+    """
+    Implementation of the Recursive Least Squares (RLS) throughput predictor.
+    Predicts the next value based on an AR(filter_order) model updated recursively.
+    """
+    t0 = time.perf_counter()
+    preds = []
+    for i in range(X.shape[0]):
+        xh = X[i]
+        n = len(xh)
+        if n <= filter_order:
+            preds.append(float(xh[-1]) if n > 0 else 0.0)
+            continue
+            
+        # Initialize RLS parameters
+        w = np.zeros((filter_order, 1), dtype=np.float32)
+        P = np.eye(filter_order, dtype=np.float32) / delta
+        
+        # Train the RLS filter on the historical window
+        for k in range(filter_order, n):
+            # Input vector (column vector)
+            u = xh[k-filter_order:k].reshape(filter_order, 1)[::-1]  # Most recent first
+            d = xh[k] # Desired output
+            
+            # Compute a priori error
+            e = d - np.dot(w.T, u)
+            
+            # Compute Kalman gain vector
+            pi = np.dot(P, u)
+            k_gain = pi / (forgetting_factor + np.dot(u.T, pi))
+            
+            # Update weights
+            w = w + k_gain * e
+            
+            # Update inverse correlation matrix
+            P = (P - np.dot(k_gain, pi.T)) / forgetting_factor
+            
+        # Predict next value
+        u_next = xh[n-filter_order:n].reshape(filter_order, 1)[::-1]
+        pred = np.dot(w.T, u_next)[0, 0]
+        
+        # Ensure positive prediction
+        if not math.isfinite(pred) or pred <= 0:
+            pred = xh[-1]
+            
+        preds.append(float(pred))
+        
+    t1 = time.perf_counter()
+    per_step = (t1 - t0) / float(X.shape[0]) if X.shape[0] > 0 else float('nan')
+    return np.array(preds, dtype=np.float32), per_step
+
 def arima_predict(series, hist_len, pred_horizon, order=(1,0,1)):
     try:
         from statsmodels.tsa.arima.model import ARIMA
@@ -111,6 +208,7 @@ def lstm_predict(X, cfg_path, onnx_path):
         ys = float(cfg.get("ys", 1.0))
         hlen = int(cfg.get("hist_len", X.shape[1]))
         if hlen != X.shape[1]:
+            print(f"Warning: LSTM model expects hist_len={hlen}, but got {X.shape[1]}")
             return None, None
         sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         inp_name = sess.get_inputs()[0].name
@@ -129,7 +227,8 @@ def lstm_predict(X, cfg_path, onnx_path):
             out.append(yv.astype(np.float32))
         per_step = t_sum / float(Xn.shape[0]) if Xn.shape[0] > 0 else float('nan')
         return np.concatenate(out, axis=0), per_step
-    except Exception:
+    except Exception as e:
+        print(f"LSTM Error: {e}")
         return None, None
 
 def _mean(arr):
@@ -215,11 +314,12 @@ def print_metrics(name, m):
 def _setup_fonts():
     try:
         plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']
+        plt.rcParams["font.size"] = 12
         plt.rcParams['axes.unicode_minus'] = False
     except Exception:
         pass
 
-def plot_summary_bars(m_lstm, m_ewma, m_arima, out_path):
+def plot_summary_bars(m_lstm, m_ewma, m_arima, m_hca, m_rls, out_path):
     _setup_fonts()
     names = []
     maes = []
@@ -234,41 +334,59 @@ def plot_summary_bars(m_lstm, m_ewma, m_arima, out_path):
         add('ARIMA', m_arima)
     if m_lstm is not None:
         add('LSTM', m_lstm)
-    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
-    axs[0].bar(names, maes, color=[EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR][:len(names)])
+    if m_hca is not None:
+        add('HCA-KF', m_hca)
+    if m_rls is not None:
+        add('RLS', m_rls)
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+    # Add RLS color to the color list
+    RLS_COLOR = "#FF69B4"
+    colors = [EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR, HCA_COLOR, RLS_COLOR][:len(names)]
+    axs[0].bar(names, maes, color=colors)
     axs[0].set_title('FCC MAE')
-    axs[1].bar(names, rmses, color=[EWMA_COLOR, ARIMA_COLOR, LSTM_COLOR][:len(names)])
+    axs[1].bar(names, rmses, color=colors)
     axs[1].set_title('FCC RMSE')
+    for ax in axs:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
-def plot_error_hist(y, y_lstm, y_ewma, y_arima, out_path):
+def plot_error_hist(y, y_lstm, y_ewma, y_arima, y_hca, y_rls, out_path):
     _setup_fonts()
     fig, ax = plt.subplots(figsize=(10,5))
     bins = 50
+    RLS_COLOR = "#FF69B4"
     if y_lstm is not None:
         ax.hist(y_lstm - y, bins=bins, alpha=0.5, density=True, label='LSTM', color=LSTM_COLOR)
     if y_ewma is not None:
         ax.hist(y_ewma - y, bins=bins, alpha=0.5, density=True, label='EWMA', color=EWMA_COLOR)
     if y_arima is not None:
         ax.hist(y_arima - y, bins=bins, alpha=0.5, density=True, label='ARIMA', color=ARIMA_COLOR)
+    if y_hca is not None:
+        ax.hist(y_hca - y, bins=bins, alpha=0.5, density=True, label='HCA-KF', color=HCA_COLOR)
+    if y_rls is not None:
+        ax.hist(y_rls - y, bins=bins, alpha=0.5, density=True, label='RLS', color=RLS_COLOR)
     ax.set_title('预测误差分布 (yhat - y)')
     ax.set_xlabel('误差')
     ax.set_ylabel('密度')
     ax.legend()
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
-def plot_scatter(y, y_lstm, y_ewma, y_arima, out_path, sample_n=10000):
+def plot_scatter(y, y_lstm, y_ewma, y_arima, y_hca, y_rls, out_path, sample_n=10000):
     _setup_fonts()
     idx = np.arange(len(y))
     if len(idx) > sample_n:
         rng = np.random.default_rng(123)
         idx = rng.choice(idx, size=sample_n, replace=False)
     ys = y[idx]
-    fig, axs = plt.subplots(1, 3, figsize=(15,4))
+    fig, axs = plt.subplots(1, 5, figsize=(22,4))
+    RLS_COLOR = "#FF69B4"
     def one(ax, yh, name, color):
         if yh is None:
             ax.axis('off')
@@ -281,33 +399,47 @@ def plot_scatter(y, y_lstm, y_ewma, y_arima, out_path, sample_n=10000):
     one(axs[0], y_lstm, 'LSTM', LSTM_COLOR)
     one(axs[1], y_ewma, 'EWMA', EWMA_COLOR)
     one(axs[2], y_arima, 'ARIMA', ARIMA_COLOR)
+    one(axs[3], y_hca, 'HCA-KF', HCA_COLOR)
+    one(axs[4], y_rls, 'RLS', RLS_COLOR)
+    for ax in axs:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
-def plot_fit_timeseries(times, y, y_lstm, y_ewma, y_arima, out_path):
+def plot_fit_timeseries(times, y, y_lstm, y_ewma, y_arima, y_hca, y_rls, out_path):
     _setup_fonts()
-    fig, ax = plt.subplots(figsize=(12,6))
-    ax.plot(times, y, label='真实值', color=TRUTH_COLOR)
+    fig, ax = plt.subplots(figsize=(8.5,4.5))
+    RLS_COLOR = "#FF69B4"
+    ax.plot(times, y, label='真实值', color=TRUTH_COLOR, linewidth=1,linestyle='-')
     if y_lstm is not None:
-        ax.plot(times, y_lstm, label='LSTM', color=LSTM_COLOR)
+        ax.plot(times, y_lstm, label='LSTM', color=LSTM_COLOR, linewidth=1.8,linestyle='--')
     if y_ewma is not None:
-        ax.plot(times, y_ewma, label='EWMA', color=EWMA_COLOR)
+        ax.plot(times, y_ewma, label='EWMA', color=EWMA_COLOR, linewidth=1.8,linestyle='--')
     if y_arima is not None:
-        ax.plot(times, y_arima, label='ARIMA', color=ARIMA_COLOR)
-    ax.set_title('FCC 预测拟合时序（单步）')
+        ax.plot(times, y_arima, label='ARIMA', color=ARIMA_COLOR, linewidth=1,linestyle='-.')
+    if y_hca is not None:
+        ax.plot(times, y_hca, label='HCA-KF', color=HCA_COLOR, linewidth=1.8,linestyle=':')
+    if y_rls is not None:
+        ax.plot(times, y_rls, label='RLS', color=RLS_COLOR, linewidth=1.8,linestyle=':')
+    ax.text(0.5, -0.2, "(a) FCC", transform=ax.transAxes,
+        ha="center", va="top")
     ax.set_xlabel('时间(s)')
     ax.set_ylabel('吞吐(kbps)')
-    ax.legend()
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 0.95), ncol=6, frameon=False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
-def plot_step_response(ks, d_lstm, d_ewma, d_arima, out_path):
+def plot_step_response(ks, d_lstm, d_ewma, d_arima, d_hca, d_rls, out_path):
     _setup_fonts()
     fig, axs = plt.subplots(1, 3, figsize=(15,4))
     x = np.arange(len(ks))
-    w = 0.25
+    w = 0.15
     def series(d, prefix):
         if d is None:
             return None
@@ -315,28 +447,42 @@ def plot_step_response(ks, d_lstm, d_ewma, d_arima, out_path):
     m_l = series(d_lstm, 'mae@')
     m_e = series(d_ewma, 'mae@')
     m_a = series(d_arima, 'mae@')
+    m_h = series(d_hca, 'mae@')
+    m_r = series(d_rls, 'mae@')
     r_l = series(d_lstm, 'rmse@')
     r_e = series(d_ewma, 'rmse@')
     r_a = series(d_arima, 'rmse@')
+    r_h = series(d_hca, 'rmse@')
+    r_r = series(d_rls, 'rmse@')
     o_l = series(d_lstm, 'overshoot@')
     o_e = series(d_ewma, 'overshoot@')
     o_a = series(d_arima, 'overshoot@')
-    def bars(ax, e, a, l, title):
+    o_h = series(d_hca, 'overshoot@')
+    o_r = series(d_rls, 'overshoot@')
+    RLS_COLOR = "#FF69B4"
+    def bars(ax, e, a, l, h, r, title):
         if e is not None:
-            ax.bar(x - w, e, width=w, label='EWMA', color=EWMA_COLOR)
+            ax.bar(x - 2*w, e, width=w, label='EWMA', color=EWMA_COLOR)
         if a is not None:
-            ax.bar(x, a, width=w, label='ARIMA', color=ARIMA_COLOR)
+            ax.bar(x - w, a, width=w, label='ARIMA', color=ARIMA_COLOR)
         if l is not None:
-            ax.bar(x + w, l, width=w, label='LSTM', color=LSTM_COLOR)
+            ax.bar(x, l, width=w, label='LSTM', color=LSTM_COLOR)
+        if h is not None:
+            ax.bar(x + w, h, width=w, label='HCA-KF', color=HCA_COLOR)
+        if r is not None:
+            ax.bar(x + 2*w, r, width=w, label='RLS', color=RLS_COLOR)
         ax.set_title(title)
         ax.set_xticks(x)
         ax.set_xticklabels([str(k) for k in ks])
         ax.legend()
-    bars(axs[0], m_e, m_a, m_l, 'FCC Step MAE')
-    bars(axs[1], r_e, r_a, r_l, 'FCC Step RMSE')
-    bars(axs[2], o_e, o_a, o_l, 'FCC Overshoot Rate')
+    bars(axs[0], m_e, m_a, m_l, m_h, m_r, 'FCC Step MAE')
+    bars(axs[1], r_e, r_a, r_l, r_h, r_r, 'FCC Step RMSE')
+    bars(axs[2], o_e, o_a, o_l, o_h, o_r, 'FCC Overshoot Rate')
+    for ax in axs:
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out_path)
+    fig.savefig(out_path, dpi=600, format="svg")
     plt.close(fig)
 
 def detect_change_points(y, dt, threshold):
@@ -424,6 +570,11 @@ def main():
     ap.add_argument("--max_traces", type=int, default=200)
     ap.add_argument("--to_kbps", action="store_true")
     ap.add_argument("--alpha", type=float, default=0.6)
+    ap.add_argument("--rls_order", type=int, default=1)
+    ap.add_argument("--rls_forget", type=float, default=0.99)
+    ap.add_argument("--hca_omega", type=float, default=1e-5)
+    ap.add_argument("--hca_mu", type=float, default=0.7)
+    ap.add_argument("--hca_v", type=float, default=1.0)
     ap.add_argument("--arima_p", type=int, default=1)
     ap.add_argument("--arima_d", type=int, default=0)
     ap.add_argument("--arima_q", type=int, default=1)
@@ -446,6 +597,12 @@ def main():
     yhat_lstm, lstm_step = lstm_predict(X, args.cfg_path, args.onnx_path)
     t2 = time.time()
     yhat_ewma, ewma_step = ewma_predict_windows(X, args.alpha)
+    t_hca_0 = time.time()
+    yhat_hca, hca_step = kf_hca_predict_windows(X, omega=args.hca_omega, mu=args.hca_mu, V=args.hca_v)
+    t_hca_1 = time.time()
+    t_rls_0 = time.time()
+    yhat_rls, rls_step = rls_predict_windows(X, filter_order=args.rls_order, forgetting_factor=args.rls_forget)
+    t_rls_1 = time.time()
     t3 = time.time()
     yhat_arima = None
     y_arima_truth = None
@@ -488,6 +645,8 @@ def main():
     m_lstm = None
     m_ewma = None
     m_arima = None
+    m_hca = None
+    m_rls = None
     if yhat_lstm is not None:
         m_lstm = metrics(y, yhat_lstm)
         print_metrics("LSTM_ONNX", m_lstm)
@@ -502,6 +661,20 @@ def main():
         print(f"time_per_step_s={fmt(ewma_step)}")
     else:
         print("EWMA=NA")
+    if yhat_hca is not None:
+        m_hca = metrics(y, yhat_hca)
+        print_metrics("HCA-KF", m_hca)
+        print(f"time_s={fmt(t_hca_1 - t_hca_0)}")
+        print(f"time_per_step_s={fmt(hca_step)}")
+    else:
+        print("HCA-KF=NA")
+    if yhat_rls is not None:
+        m_rls = metrics(y, yhat_rls)
+        print_metrics("RLS", m_rls)
+        print(f"time_s={fmt(t_rls_1 - t_rls_0)}")
+        print(f"time_per_step_s={fmt(rls_step)}")
+    else:
+        print("RLS=NA")
     if yhat_arima is not None and y_arima_truth is not None:
         m_arima = metrics(y_arima_truth, yhat_arima)
         print_metrics("ARIMA", m_arima)
@@ -518,13 +691,17 @@ def main():
     print_step_metrics("LSTM_ONNX", d_lstm, ks)
     d_ewma = step_response_metrics(y, yhat_ewma, cps_all, ks)
     print_step_metrics("EWMA", d_ewma, ks)
+    d_hca = step_response_metrics(y, yhat_hca, cps_all, ks)
+    print_step_metrics("HCA-KF", d_hca, ks)
+    d_rls = step_response_metrics(y, yhat_rls, cps_all, ks)
+    print_step_metrics("RLS", d_rls, ks)
     if yhat_arima is not None and y_arima_truth is not None:
         cps_ar = detect_change_points(y_arima_truth, args.dt, args.cp_threshold)
         d_arima = step_response_metrics(y_arima_truth, yhat_arima, cps_ar, ks)
         print_step_metrics("ARIMA", d_arima, ks)
-    out_step = os.path.join(os.path.join(os.getcwd(), "assets", "images"), "predict_step_response_fcc.png")
+    out_step = os.path.join(os.path.join(os.getcwd(), "assets", "images"), "predict_step_response_fcc.svg")
     try:
-        plot_step_response(ks, d_lstm, d_ewma, d_arima if yhat_arima is not None and y_arima_truth is not None else None, out_step)
+        plot_step_response(ks, d_lstm, d_ewma, d_arima if yhat_arima is not None and y_arima_truth is not None else None, d_hca, d_rls, out_step)
     except Exception:
         pass
     base_dir = os.getcwd()
@@ -533,13 +710,15 @@ def main():
         os.makedirs(img_dir, exist_ok=True)
     except Exception:
         pass
-    out_summary = os.path.join(img_dir, "predict_compare_summary_fcc.png")
-    out_hist = os.path.join(img_dir, "predict_compare_error_hist_fcc.png")
-    out_scatter = os.path.join(img_dir, "predict_compare_scatter_fcc.png")
-    plot_summary_bars(m_lstm, m_ewma, m_arima, out_summary)
+    out_summary = os.path.join(img_dir, "predict_compare_summary_fcc.svg")
+    out_hist = os.path.join(img_dir, "predict_compare_error_hist_fcc.svg")
+    out_scatter = os.path.join(img_dir, "predict_compare_scatter_fcc.svg")
+    plot_summary_bars(m_lstm, m_ewma, m_arima, m_hca, m_rls, out_summary)
     y_for_hist = y
     y_lstm = yhat_lstm if yhat_lstm is not None else None
     y_ewma = yhat_ewma if yhat_ewma is not None else None
+    y_hca = yhat_hca if yhat_hca is not None else None
+    y_rls = yhat_rls if yhat_rls is not None else None
     y_arima = None
     if yhat_arima is not None and y_arima_truth is not None:
         try:
@@ -548,8 +727,8 @@ def main():
             y_arima = yhat_arima[:k]
         except Exception:
             y_arima = None
-    plot_error_hist(y_for_hist, y_lstm, y_ewma, y_arima, out_hist)
-    plot_scatter(y_for_hist, y_lstm, y_ewma, y_arima, out_scatter)
+    plot_error_hist(y_for_hist, y_lstm, y_ewma, y_arima, y_hca, y_rls, out_hist)
+    plot_scatter(y_for_hist, y_lstm, y_ewma, y_arima, y_hca, y_rls, out_scatter)
     try:
         paths_all = sorted(glob.glob(os.path.join(args.fcc_dir, "test_fcc_trace_*")))
         ex_path = args.example_trace_path if args.example_trace_path else (paths_all[args.example_trace_idx] if paths_all else None)
@@ -560,6 +739,8 @@ def main():
             if Xi is not None and yi is not None and len(yi) > 0:
                 yh_lstm, _ = lstm_predict(Xi, args.cfg_path, args.onnx_path)
                 yh_ewma, _ = ewma_predict_windows(Xi, args.alpha)
+                yh_hca, _ = kf_hca_predict_windows(Xi, omega=args.hca_omega, mu=args.hca_mu, V=args.hca_v)
+                yh_rls, _ = rls_predict_windows(Xi, filter_order=args.rls_order, forgetting_factor=args.rls_forget)
                 yh_arima, _ = arima_predict(s, args.hist_len, args.pred_horizon, order=(args.arima_p, args.arima_d, args.arima_q))
                 ts = np.array([ (args.hist_len + k) * args.dt for k in range(len(yi)) ], dtype=np.float32)
                 if args.example_t0 is not None and args.example_t1 is not None:
@@ -571,13 +752,17 @@ def main():
                             yh_lstm = yh_lstm[m]
                         if yh_ewma is not None:
                             yh_ewma = yh_ewma[m]
+                        if yh_hca is not None:
+                            yh_hca = yh_hca[m]
+                        if yh_rls is not None:
+                            yh_rls = yh_rls[m]
                         if yh_arima is not None:
                             try:
                                 yh_arima = yh_arima[m]
                             except Exception:
                                 pass
-                out_fit = os.path.join(img_dir, "predict_fit_example_fcc.png")
-                plot_fit_timeseries(ts, yi, yh_lstm, yh_ewma, yh_arima, out_fit)
+                out_fit = os.path.join(img_dir, "predict_fit_example_fcc.svg")
+                plot_fit_timeseries(ts, yi, yh_lstm, yh_ewma, yh_arima, yh_hca, yh_rls, out_fit)
     except Exception:
         pass
 
